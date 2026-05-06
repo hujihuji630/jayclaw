@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="grain-overlay"></div>
+
+    <!-- 工作目录选择弹窗 -->
+    <div class="workspace-modal-overlay" id="workspaceModal">
+        <div class="workspace-modal">
+            <div class="workspace-modal-title">选择工作目录</div>
+            <div class="workspace-modal-desc">Agent 将在此目录下读写文件和执行命令</div>
+            <div class="workspace-path-row">
+                <input type="text" id="workspaceInput" class="workspace-modal-input" placeholder="目录路径" autocomplete="off" spellcheck="false">
+                <button class="workspace-browse-btn" id="workspaceBrowseBtn" title="浏览...">📂</button>
+            </div>
+            <div class="workspace-modal-error" id="workspaceError"></div>
+            <div class="workspace-modal-actions">
+                <button class="workspace-modal-btn" id="workspaceConfirm">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 左侧滑出面板 -->
+    <div class="panel-overlay" id="panelOverlay"></div>
+    <div class="side-panel" id="sidePanel">
+        <div class="panel-header">
+            <span class="panel-title" id="panelTitle">Sessions</span>
+            <button class="panel-close" id="panelClose">✕</button>
+        </div>
+        <div class="panel-body" id="panelBody">
+            <!-- 内容由 JS 动态填充 -->
+        </div>
+    </div>
+
+    <!-- 模型下拉菜单 -->
+    <div class="model-dropdown" id="modelDropdown">
+        <div class="model-dropdown-search">
+            <input type="text" id="modelSearch" placeholder="搜索模型..." autocomplete="off">
+        </div>
+        <div class="model-dropdown-list" id="modelList">
+            <div class="model-loading">加载中...</div>
+        </div>
+    </div>
+
+    <div class="app-container">
+        <!-- Left Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1 class="logo">JayClaw</h1>
+                <span class="version">v1.0</span>
+            </div>
+
+            <!-- Agent Selection -->
+            <div class="agent-section">
+                <div class="section-label">当前 Agent</div>
+                <div class="agent-selector">
+                    <span class="agent-icon">◆</span>
+                    <span class="agent-name">默认 Agent</span>
+                    <span class="dropdown-icon">▾</span>
+                </div>
+            </div>
+
+            <!-- Main Navigation -->
+            <nav class="nav-section">
+                <button class="nav-item active">
+                    <span class="nav-icon">◉</span>
+                    <span class="nav-text">Chat</span>
+                    <span class="nav-glow"></span>
+                </button>
+            </nav>
+
+            <!-- Control Section -->
+            <div class="control-section">
+                <div class="section-label">控制</div>
+                <button class="nav-item" id="sessionsBtn">
+                    <span class="nav-icon">◈</span>
+                    <span class="nav-text">Sessions</span>
+                </button>
+            </div>
+
+            <!-- Workspace Section -->
+            <div class="workspace-section">
+                <div class="section-label">工作区</div>
+                <button class="nav-item" id="filesBtn">
+                    <span class="nav-icon">◫</span>
+                    <span class="nav-text">Files</span>
+                </button>
+                <button class="nav-item" id="skillsBtn">
+                    <span class="nav-icon">◬</span>
+                    <span class="nav-text">Skills</span>
+                </button>
+                <button class="nav-item" id="toolsBtn">
+                    <span class="nav-icon">◭</span>
+                    <span class="nav-text">Tools</span>
+                </button>
+            </div>
+
+            <!-- Settings Section -->
+            <div class="settings-section">
+                <div class="section-label">设置</div>
+                <button class="nav-item" id="configBtn">
+                    <span class="nav-icon">◮</span>
+                    <span class="nav-text">Configuration</span>
+                </button>
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="status-indicator">
+                    <span class="status-dot"></span>
+                    <span class="status-text">在线</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Top Bar -->
+            <header class="top-bar">
+                <h2 class="chat-title">New Chat</h2>
+                <div class="top-bar-actions">
+                    <div class="model-selector">
+                        <span class="model-icon">⬢</span>
+                        <span class="model-name" id="currentModel">{{ model }}</span>
+                        <span class="dropdown-icon">▾</span>
+                    </div>
+                    <button class="icon-btn" id="newChatBtn" title="新建对话">
+                        <span>✦</span>
+                    </button>
+                    <button class="icon-btn" id="searchBtn" title="搜索">
+                        <span>◎</span>
+                    </button>
+                    <button class="icon-btn" id="historyBtn" title="历史记录">
+                        <span>◷</span>
+                    </button>
+                    <button class="icon-btn theme-toggle" id="themeToggle" title="切换主题">
+                        <span class="theme-icon-sun">☀</span>
+                        <span class="theme-icon-moon">☾</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Chat Container -->
+            <div class="chat-container" id="chatContainer">
+                <!-- Welcome Screen -->
+                <div class="welcome-screen" id="welcomeScreen">
+                    <div class="welcome-content">
+                        <div class="welcome-avatar">
+                            <div class="avatar-inner">J</div>
+                            <div class="avatar-ring"></div>
+                            <div class="avatar-ring-2"></div>
+                        </div>
+                        <h3 class="welcome-title">Hello, how can I help you today?</h3>
+                        <p class="welcome-subtitle">我是一个强大的 AI 助手，可以帮助你解决各种问题</p>
+
+                        <div class="quick-actions">
+                            <button class="quick-action-btn">
+                                <span class="quick-icon">◆</span>
+                                <span class="quick-text">开始新的对话</span>
+                                <span class="quick-arrow">→</span>
+                            </button>
+                            <button class="quick-action-btn">
+                                <span class="quick-icon">◇</span>
+                                <span class="quick-text">告诉我你有哪些技能？</span>
+                                <span class="quick-arrow">→</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Messages will be inserted here -->
+            </div>
+
+            <!-- Input Area -->
+            <div class="input-area">
+                <div class="input-container">
+                    <div class="input-wrapper">
+                        <button class="input-icon-btn" id="voiceBtn" title="语音输入">
+                            <span>◉</span>
+                        </button>
+                        <button class="input-icon-btn" id="attachBtn" title="附加文件">
+                            <span>◈</span>
+                        </button>
+                        <input type="file" id="fileInput" style="display: none" multiple>
+                        <textarea
+                            id="messageInput"
+                            class="message-input"
+                            placeholder="输入消息... (Shift+Enter 换行)"
+                            rows="1"
+                        ></textarea>
+                        <div class="char-counter">
+                            <span id="charCount">0</span>/10000
+                        </div>
+                        <button class="send-btn" id="sendBtn" title="发送">
+                            <span class="send-icon">↑</span>
+                            <span class="send-glow"></span>
+                        </button>
+                    </div>
+                </div>
+                <div class="input-footer">
+                    <span class="footer-text">Works for you, grows with you</span>
+                    <span class="footer-dot">•</span>
+                    <span class="footer-link" id="aboutLink">关于 JayClaw</span>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jay-messenger"
+version = "0.0.3"
+description = "Universal multi-platform bot framework"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+    { name = "hujihuji630" }
+]
+
+dependencies = [
+    "jay-llm>=0.0.1",
+    "jay-agent-core>=0.0.1",
+    "pydantic>=2.6.0",
+    "httpx>=0.26.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/hujihuji630/jayclaw"
+Repository = "https://github.com/hujihuji630/jayclaw"
+Issues = "https://github.com/hujihuji630/jayclaw/issues"
+
+[project.optional-dependencies]
+redis = [
+    "redis>=5.0.0",
+]
+encryption = [
+    "cryptography>=41.0.0",
+]
+slack = [
+    "slack-sdk>=3.26.0",
+    "slack-bolt>=1.18.0",
+]
+discord = [
+    "discord.py>=2.3.0",
+]
+whatsapp = [
+    "whatsapp-cloud-api>=0.0.4",
+]
+telegram = [
+    "python-telegram-bot>=20.7",
+]
+feishu = [
+    "lark-oapi>=1.5.0",
+]
+all = [
+    "jay-messenger[redis,encryption,slack,discord,whatsapp,telegram,feishu]"
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+]
+
+[project.scripts]
+jay-messenger = "jay_messenger.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jay_messenger"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+]
