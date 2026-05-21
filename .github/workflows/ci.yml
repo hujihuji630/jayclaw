@@ -63,10 +63,12 @@ jobs:
         ruff check packages/
         ruff format --check packages/
 
-    - name: Run type checking
+    - name: Run type checking (strict for core packages)
       shell: bash
       run: |
-        mypy packages/ || true
+        # Core packages must pass; outer packages allowed to fail for now.
+        mypy packages/jay-agent-core/src packages/jay-llm/src
+        mypy packages/jay-agent-tools/src packages/jay-coding-agent/src || true
 
     - name: Run tests
       shell: bash
