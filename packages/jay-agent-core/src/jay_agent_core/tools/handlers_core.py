@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -207,3 +208,78 @@ async def handle_get_current_time(
             ok=False,
             error=f"Invalid timezone '{timezone_name}': {e}",
         )
+
+
+@_register("read_knowledge")
+async def handle_read_knowledge(
+    args: dict, user_id: str, meta: dict, cancel: asyncio.Event | None = None
+) -> ToolResult:
+    """Load a knowledge document from docs/agent-knowledge/."""
+    topic = (args.get("topic") or "").strip().lower()
+
+    if not topic:
+        return ToolResult(ok=False, error="topic is required")
+
+    workspace = Path(meta.get("workspace", ".")) if meta else Path(".")
+    knowledge_dir = workspace / "docs" / "agent-knowledge"
+
+    if "/" in topic or "\\" in topic or ".." in topic:
+        return ToolResult(ok=False, error=f"Invalid topic: {topic}")
+
+    doc_path = knowledge_dir / f"{topic}.md"
+
+    if not doc_path.exists():
+        available = sorted(
+            p.stem for p in knowledge_dir.glob("*.md") if p.is_file()
+        ) if knowledge_dir.exists() else []
+        return ToolResult(
+            ok=False,
+            error=f"Topic '{topic}' not found. Available: {available}",
+        )
+
+    content = doc_path.read_text(encoding="utf-8")
+    return ToolResult(ok=True, data={"topic": topic, "content": content})
+
+
+@_register("update_progress")
+async def handle_update_progress(
+    args: dict, user_id: str, meta: dict, cancel: asyncio.Event | None = None
+) -> ToolResult:
+    """Handle update_progress - structured task progress tracking."""
+    from ..progress import Progress, Step
+
+    action = (args.get("action") or "").strip()
+    workspace = Path(meta.get("workspace", ".")) if meta else Path(".")
+
+    if action == "init":
+        goal = args.get("goal", "").strip()
+        steps_raw = args.get("steps", [])
+        if not goal or not steps_raw:
+            return ToolResult(ok=False, error="'goal' and 'steps' required for init")
+        steps = [Step(id=i + 1, description=s) for i, s in enumerate(steps_raw)]
+        progress = Progress(goal=goal, steps=steps)
+        progress.save(workspace)
+        return ToolResult(ok=True, data={"task_id": progress.task_id, "total_steps": len(steps)})
+
+    elif action == "advance":
+        step_id = args.get("step_id")
+        step_status = args.get("step_status", "completed")
+        if step_id is None:
+            return ToolResult(ok=False, error="'step_id' required for advance")
+        progress = Progress.load(workspace)
+        if not progress:
+            return ToolResult(ok=False, error="No active progress. Call init first.")
+        progress.advance(int(step_id), step_status)
+        progress.save(workspace)
+        return ToolResult(ok=True, data={"step_id": step_id, "status": progress.status})
+
+    elif action == "fail":
+        progress = Progress.load(workspace)
+        if not progress:
+            return ToolResult(ok=False, error="No active progress.")
+        progress.fail()
+        progress.save(workspace)
+        return ToolResult(ok=True, data={"status": "failed"})
+
+    else:
+        return ToolResult(ok=False, error=f"Unknown action: {action}")

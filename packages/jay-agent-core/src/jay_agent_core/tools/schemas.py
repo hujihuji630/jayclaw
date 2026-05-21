@@ -57,6 +57,8 @@ CORE_TOOL_NAMES: frozenset[str] = frozenset(
         "plan",
         "discover_tools",
         "get_current_time",
+        "read_knowledge",
+        "update_progress",
     }
 )
 
@@ -140,6 +142,59 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
         permission="none",
     ),
+    _fn(
+        "read_knowledge",
+        "Load a knowledge document by topic ID. "
+        "Use this when you need detailed information about a specific mechanism. "
+        "Available topics are listed in the Knowledge Map section of AGENTS.md.",
+        {
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": (
+                        "Topic ID from Knowledge Map (e.g., 'tool-lazy-loading', "
+                        "'resilience-chain', 'ssrf-protection')"
+                    ),
+                }
+            },
+            "required": ["topic"],
+        },
+        permission="read",
+    ),
+    _fn(
+        "update_progress",
+        "Update task progress. Call this to initialize a plan or mark steps as completed. "
+        "External tools (IDE, Web UI) read .agents/progress.json to display progress.",
+        {
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["init", "advance", "fail"],
+                    "description": "Action: init (create plan), advance (update step), fail (mark failed)",
+                },
+                "goal": {
+                    "type": "string",
+                    "description": "Task goal (required for init)",
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Step descriptions (required for init)",
+                },
+                "step_id": {
+                    "type": "integer",
+                    "description": "Step ID to update (required for advance)",
+                },
+                "step_status": {
+                    "type": "string",
+                    "enum": ["in_progress", "completed", "skipped"],
+                    "description": "New status for the step (required for advance)",
+                },
+            },
+            "required": ["action"],
+        },
+        permission="storage",
+    ),
 ]
 
 
@@ -161,6 +216,8 @@ TOOL_BUDGETS: dict[str, dict[str, int]] = {
     "plan": {"timeout": 2, "max_retries": 0},
     "discover_tools": {"timeout": 1, "max_retries": 0},
     "get_current_time": {"timeout": 1, "max_retries": 0},
+    "read_knowledge": {"timeout": 5, "max_retries": 1},
+    "update_progress": {"timeout": 2, "max_retries": 0},
 }
 
 
@@ -190,6 +247,7 @@ PARALLEL_SAFE_TOOLS: frozenset[str] = frozenset(
         "think",
         "get_current_time",
         "discover_tools",
+        "read_knowledge",
         # Read-only tools (safe to run in parallel)
         "search_web",
         "read_webpage",
