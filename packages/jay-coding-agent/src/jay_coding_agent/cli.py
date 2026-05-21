@@ -311,5 +311,30 @@ def analyze(
     console.print(result)
 
 
+@app.command()
+def context_status(
+    workspace: Path = typer.Option(".", "--path", "-w", help="Workspace directory"),
+):
+    """Show current context utilization (placeholder; called via /context in REPL)."""
+    console.print("[yellow]Context status is shown live during an active session.[/yellow]")
+    console.print("[dim]Use /context inside the REPL to see current utilization.[/dim]")
+
+
+@app.command()
+def handoff(
+    workspace: Path = typer.Option(".", "--path", "-w", help="Workspace directory"),
+    goal: str = typer.Option("", "--goal", help="Original task goal"),
+):
+    """Generate a handoff document for the current session."""
+    from .handoff import HandoffData, generate_handoff, extract_handoff_data_from_history
+
+    progress_path = workspace / ".agents" / "progress.json"
+    data = extract_handoff_data_from_history([], progress_path)
+    if goal:
+        data.goal = goal
+    path = generate_handoff(data, workspace, ratio=0.0)
+    console.print(f"[green]Handoff written:[/green] {path}")
+
+
 if __name__ == "__main__":
     app()

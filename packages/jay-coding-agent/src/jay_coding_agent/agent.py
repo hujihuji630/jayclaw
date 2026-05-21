@@ -607,6 +607,14 @@ Tools: {len(self.agent.registry)}
         elif cmd.startswith("/cost") or cmd.startswith("/usage"):
             self._show_cost_summary()
 
+        elif cmd.startswith("/context"):
+            self._show_context_status()
+
+        elif cmd.startswith("/handoff"):
+            parts = cmd.split(maxsplit=1)
+            extra_goal = parts[1] if len(parts) > 1 else ""
+            self._generate_handoff(extra_goal)
+
         elif cmd.startswith("/"):
             # Check if it's a prompt template
             template_name = cmd.lstrip("/").split()[0]
@@ -1366,3 +1374,35 @@ In cooldown: {status["cooldown_profiles"]}
 
         # Show usage file location
         self.ui.system(f"\nUsage data: {self.cost_tracker.usage_file}")
+
+    def _show_context_status(self) -> None:
+        from jay_agent_core.context import compute_utilization, CompressionConfig
+
+        max_tokens = getattr(getattr(self, "llm", None), "context_window", None)
+        if max_tokens is None:
+            max_tokens = getattr(getattr(getattr(self, "llm", None), "config", None), "context_window", 8000)
+        util = compute_utilization(self.history, max_tokens=max_tokens)
+        self.ui.panel(
+            f"Tokens: {util.current_tokens}/{util.max_tokens} ({util.percent}%)\n"
+            f"Zone: {util.zone}",
+            title="Context",
+        )
+
+    def _generate_handoff(self, extra_goal: str = "") -> None:
+        from .handoff import (
+            HandoffData,
+            extract_handoff_data_from_history,
+            generate_handoff,
+        )
+        from jay_agent_core.context import compute_utilization
+
+        progress_path = self.workspace / ".agents" / "progress.json"
+        data = extract_handoff_data_from_history(self.history, progress_path)
+        if extra_goal:
+            data.goal = extra_goal
+        max_tokens = getattr(getattr(self, "llm", None), "context_window", None)
+        if max_tokens is None:
+            max_tokens = getattr(getattr(getattr(self, "llm", None), "config", None), "context_window", 8000)
+        util = compute_utilization(self.history, max_tokens=max_tokens)
+        path = generate_handoff(data, self.workspace, ratio=util.ratio)
+        self.ui.system(f"Handoff written: {path}")

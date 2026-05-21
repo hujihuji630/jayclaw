@@ -301,18 +301,20 @@ class SystemPromptBuilder(Protocol):
 
 @dataclass
 class CompressionConfig:
-    """Configuration for context compression.
+    """Configuration for context compression and utilization tracking.
 
     Attributes:
+        user_decision_threshold: Ratio at which to prompt user for handoff decision (Smart Zone)
         level1_threshold: Token ratio to trigger Level 1 (truncate tool results)
         level2_threshold: Token ratio to trigger Level 2 (replace with summaries)
         level3_threshold: Token ratio to trigger Level 3 (LLM summarization)
         max_tool_result_chars: Max characters per tool result after Level 1
     """
 
-    level1_threshold: float = 0.7  # 70% of context window
-    level2_threshold: float = 0.8  # 80% of context window
-    level3_threshold: float = 0.9  # 90% of context window
+    user_decision_threshold: float = 0.4
+    level1_threshold: float = 0.7
+    level2_threshold: float = 0.8
+    level3_threshold: float = 0.9
     max_tool_result_chars: int = 1000
 
 
@@ -489,3 +491,60 @@ def compress_messages(
     # Level 3: LLM summarization (async, so return Level 2 for now)
     # In practice, this should be called with await compress_level3()
     return compress_level2(messages)
+
+
+@dataclass
+class ContextUtilization:
+    """Snapshot of current context window usage."""
+
+    current_tokens: int
+    max_tokens: int
+    ratio: float
+    zone: str  # "smart" (< 40%) | "warning" (40-70%) | "compressed" (>= 70%)
+    should_prompt_user: bool
+
+    @property
+    def percent(self) -> int:
+        return int(self.ratio * 100)
+
+
+def compute_utilization(
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    config: CompressionConfig | None = None,
+    previous_ratio: float | None = None,
+) -> ContextUtilization:
+    """Compute current context utilization."""
+    from .token_counter import count_tokens
+
+    if config is None:
+        config = CompressionConfig()
+
+    total = 0
+    for msg in messages:
+        content = msg.get("content") or ""
+        if isinstance(content, str):
+            total += count_tokens(content)
+
+    ratio = total / max_tokens if max_tokens > 0 else 0.0
+
+    if ratio < config.user_decision_threshold:
+        zone = "smart"
+    elif ratio < config.level1_threshold:
+        zone = "warning"
+    else:
+        zone = "compressed"
+
+    should_prompt = (
+        previous_ratio is not None
+        and previous_ratio < config.user_decision_threshold
+        and ratio >= config.user_decision_threshold
+    )
+
+    return ContextUtilization(
+        current_tokens=total,
+        max_tokens=max_tokens,
+        ratio=ratio,
+        zone=zone,
+        should_prompt_user=should_prompt,
+    )
