@@ -209,3 +209,40 @@
 
 /* Grain overlay killed */
 .grain-overlay { display: none; }
+
+/* Help modal (D6) */
+.help-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: none;
+  align-items: center; justify-content: center;
+  z-index: 90;
+}
+.help-modal-overlay.active { display: flex; }
+.help-modal {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: 680px; max-width: 90vw;
+  padding: 20px 24px;
+}
+.help-modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.help-modal-title { font-family: var(--font-display); font-size: 1.25rem; font-weight: 600; }
+.help-modal-close {
+  background: transparent; border: none; color: var(--text-secondary);
+  font-size: 1.125rem; cursor: pointer; padding: 4px 8px; border-radius: var(--radius-sm);
+}
+.help-modal-close:hover { color: var(--accent); background: var(--bg-surface-hover); }
+.help-modal-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.help-col-title {
+  font-family: var(--font-display); font-size: 0.6875rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+.help-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.8125rem;
+  padding: 4px 0;
+}
+.help-row span { color: var(--text-secondary); margin-left: auto; }

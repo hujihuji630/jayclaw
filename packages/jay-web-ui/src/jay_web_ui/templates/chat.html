@@ -319,6 +319,37 @@
         </div>
     </div>
 
+    <div class="help-modal-overlay" id="helpModal">
+        <div class="help-modal">
+            <div class="help-modal-header">
+                <h2 class="help-modal-title">键盘快捷键</h2>
+                <button class="help-modal-close" id="helpModalClose" aria-label="Close">✕</button>
+            </div>
+            <div class="help-modal-grid">
+                <div class="help-col">
+                    <div class="help-col-title">导航</div>
+                    <div class="help-row"><kbd>⌘K</kbd> <kbd>Ctrl+K</kbd><span>命令面板</span></div>
+                    <div class="help-row"><kbd>⌘↑</kbd><span>上一条 user 消息</span></div>
+                    <div class="help-row"><kbd>⌘↓</kbd><span>下一条 user 消息</span></div>
+                    <div class="help-row"><kbd>Esc</kbd><span>关闭面板/弹窗</span></div>
+                </div>
+                <div class="help-col">
+                    <div class="help-col-title">编辑</div>
+                    <div class="help-row"><kbd>Enter</kbd><span>发送</span></div>
+                    <div class="help-row"><kbd>Shift+Enter</kbd><span>换行</span></div>
+                    <div class="help-row"><kbd>⌘Enter</kbd><span>强制发送</span></div>
+                    <div class="help-row"><kbd>/</kbd><span>Slash 命令</span></div>
+                </div>
+                <div class="help-col">
+                    <div class="help-col-title">操作</div>
+                    <div class="help-row"><kbd>⌘N</kbd><span>新对话</span></div>
+                    <div class="help-row"><kbd>⌘L</kbd><span>清屏</span></div>
+                    <div class="help-row"><kbd>⌘/</kbd> <kbd>?</kbd><span>帮助</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="palette-overlay" id="paletteOverlay" role="dialog" aria-modal="true">
         <div class="palette">
             <input class="palette-input" id="paletteInput" type="text" placeholder="搜索会话、文件、技能、命令..." autocomplete="off" spellcheck="false">
