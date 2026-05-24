@@ -130,12 +130,6 @@
             <header class="top-bar">
                 <h2 class="chat-title">New Chat</h2>
                 <div class="top-bar-actions">
-                    <div class="context-meter" id="contextMeter" style="display:none">
-                        <span class="ctx-label">0%</span>
-                        <div class="ctx-bar">
-                            <div class="ctx-bar-fill" data-zone="smart"></div>
-                        </div>
-                    </div>
                     <button class="compact-btn" id="compactBtn" title="压缩上下文">
                         <span>⊘</span>
                         <span>Compact</span>
@@ -223,9 +217,16 @@
                     </div>
                 </div>
                 <div class="input-footer">
-                    <span class="footer-text">Works for you, grows with you</span>
-                    <span class="footer-dot">•</span>
-                    <span class="footer-link" id="aboutLink">关于 JayClaw</span>
+                    <span class="footer-hint"><kbd>Shift+Enter</kbd> 换行</span>
+                    <span class="footer-dot">·</span>
+                    <span class="footer-hint"><kbd>/</kbd> 命令</span>
+                    <span class="footer-dot">·</span>
+                    <span class="footer-hint"><kbd>⌘K</kbd> 搜索</span>
+                    <span class="footer-spacer"></span>
+                    <div class="context-meter" id="contextMeter" style="display:none">
+                        <span class="ctx-label">0%</span>
+                        <div class="ctx-bar"><div class="ctx-bar-fill" data-zone="smart"></div></div>
+                    </div>
                 </div>
             </div>
         </main>

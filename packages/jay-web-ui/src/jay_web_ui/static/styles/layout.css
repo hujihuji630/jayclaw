@@ -178,3 +178,25 @@
 .footer-link { cursor: pointer; }
 .footer-link:hover { color: var(--accent); }
 .footer-dot { opacity: 0.5; }
+
+/* Footer hints + context meter (D26) */
+.footer-spacer { flex: 1; }
+.footer-hint { display: inline-flex; align-items: center; gap: 4px; }
+.context-meter {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 0.75rem; color: var(--text-secondary);
+}
+.ctx-label { font-variant-numeric: tabular-nums; }
+.ctx-bar {
+  width: 80px; height: 4px;
+  background: var(--border);
+  border-radius: 2px; overflow: hidden;
+}
+.ctx-bar-fill {
+  height: 100%; width: 0%;
+  background: var(--accent);
+  transition: width var(--motion-base) var(--easing), background var(--motion-base) var(--easing);
+}
+.ctx-bar-fill[data-zone="warning"] { background: var(--code-number); }
+.ctx-bar-fill[data-zone="compressed"] { background: var(--danger); }
+
