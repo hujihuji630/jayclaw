@@ -142,11 +142,16 @@ def register(server) -> None:
 
         server.history.clear()
         messages = []
+        idx = 0
         for entry in conversation:
             if entry.role in ("user", "assistant"):
-                msg = ChatMessage(role=entry.role, content=entry.content)
+                # Legacy session entries lack an id on disk; assign a stable
+                # synthetic id so frontend truncate/edit operations have a key.
+                entry_id = getattr(entry, "id", None) or f"legacy-{idx}"
+                msg = ChatMessage(id=entry_id, role=entry.role, content=entry.content)
                 server.history.append(msg)
-                messages.append({"role": entry.role, "content": entry.content})
+                messages.append({"id": entry_id, "role": entry.role, "content": entry.content})
+                idx += 1
 
         if server.agent and hasattr(server.agent, "session"):
             server.agent.session = session

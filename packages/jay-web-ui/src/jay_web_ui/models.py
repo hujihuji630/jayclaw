@@ -1,13 +1,20 @@
 """Data models for web UI."""
 
 from typing import Any, Literal
+from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+def _gen_id() -> str:
+    """uuid4 hex — matches the convention used in jay_agent_core.memory.Message."""
+    return uuid4().hex
 
 
 class ChatMessage(BaseModel):
     """A chat message."""
 
+    id: str = Field(default_factory=_gen_id)
     role: Literal["user", "assistant", "system"]
     content: str
     timestamp: str | None = None

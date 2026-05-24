@@ -104,3 +104,45 @@ def test_server_theme(mock_llm):
     theme = {"primary_color": "#ff0000"}
     server = ChatServer(llm=mock_llm, theme=theme)
     assert server.theme == theme
+
+
+@pytest.fixture
+def server_with_history(mock_llm):
+    """Build a ChatServer with 4 pre-populated messages for D3/D17 tests."""
+    from jay_web_ui.models import ChatMessage
+    server = ChatServer(llm=mock_llm, title="Test", port=8765)
+    server.history.extend([
+        ChatMessage(role="user", content="hello"),
+        ChatMessage(role="assistant", content="hi"),
+        ChatMessage(role="user", content="ping"),
+        ChatMessage(role="assistant", content="pong"),
+    ])
+    client = TestClient(server.app, base_url="http://127.0.0.1:8765")
+    return client, server
+
+
+def test_history_endpoint_returns_message_ids(server_with_history):
+    client, _ = server_with_history
+    r = client.get('/api/history')
+    assert r.status_code == 200
+    messages = r.json()['messages']
+    assert messages, 'fixture should have ≥1 message'
+    for m in messages:
+        assert 'id' in m and m['id'], f'message missing id: {m}'
+    # IDs are unique within a history.
+    ids = [m['id'] for m in messages]
+    assert len(set(ids)) == len(ids)
+
+
+def test_chat_message_auto_generates_id():
+    from jay_web_ui.models import ChatMessage
+    a = ChatMessage(role='user', content='hi')
+    b = ChatMessage(role='user', content='hi')
+    assert a.id and b.id and a.id != b.id
+
+
+def test_chat_message_explicit_id_round_trips():
+    from jay_web_ui.models import ChatMessage
+    m = ChatMessage(id='my-custom-id', role='user', content='hi')
+    assert m.id == 'my-custom-id'
+    assert m.model_dump()['id'] == 'my-custom-id'
