@@ -28,6 +28,13 @@ class ChatApp {
         this._lastContextZone = 'smart';
         this.chatTitle = document.querySelector('.chat-title');
         this.sessionTitle = 'New Chat';
+        this.paletteOverlay = document.getElementById('paletteOverlay');
+        this.paletteInput = document.getElementById('paletteInput');
+        this.paletteList = document.getElementById('paletteList');
+        this._paletteCache = { ts: 0, items: [] };
+        this._paletteSelected = 0;
+        this._paletteCurrentItems = [];
+        this._paletteFlat = [];
 
         this.init();
     }
@@ -131,6 +138,27 @@ class ChatApp {
             dragCounter = 0;
             hideOverlay();
             this.handleFileSelect({ target: { files: e.dataTransfer.files } });
+        });
+
+        // ⌘K / Ctrl+K — command palette (D2)
+        document.addEventListener('keydown', (e) => {
+            const meta = e.metaKey || e.ctrlKey;
+            if (meta && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                this.openPalette();
+            } else if (e.key === 'Escape' && this.paletteOverlay?.classList.contains('active')) {
+                e.preventDefault();
+                this.closePalette();
+            }
+        });
+        this.paletteOverlay?.addEventListener('click', (e) => {
+            if (e.target === this.paletteOverlay) this.closePalette();
+        });
+        this.paletteInput?.addEventListener('input', () => this.renderPalette());
+        this.paletteInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowDown') { e.preventDefault(); this.movePaletteSelection(1); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); this.movePaletteSelection(-1); }
+            else if (e.key === 'Enter') { e.preventDefault(); this.executePaletteSelection(); }
         });
 
         this.loadHistory();
@@ -1755,6 +1783,163 @@ def my_tool(arg: str) -> str:
                 }
             });
         });
+    }
+
+    // ── Command Palette (D2) ──────────────────────────────────────
+    paletteStaticCommands() {
+        return [
+            { id: 'new', label: '新建对话', icon: '✦', group: '命令', shortcut: '⌘N', run: () => this.newChat() },
+            { id: 'compact', label: '压缩上下文', icon: '⊘', group: '命令', run: () => this.doCompact() },
+            { id: 'handoff', label: '生成 Handoff', icon: '⇥', group: '命令', run: () => this.doHandoff() },
+            { id: 'fork', label: 'Fork 会话', icon: '⎇', group: '命令', run: () => this.showForkModal() },
+            { id: 'export', label: '导出为 Markdown', icon: '📤', group: '命令', run: () => this.exportMarkdown() },
+            { id: 'clear', label: '清屏', icon: '✕', group: '命令', shortcut: '⌘L', run: () => this.clearView() },
+            { id: 'theme', label: '切换主题', icon: '☾', group: '命令', run: () => this.toggleTheme() },
+            { id: 'files', label: '打开 Files', icon: '◫', group: '命令', run: () => this.openPanel('files') },
+            { id: 'skills', label: '打开 Skills', icon: '◬', group: '命令', run: () => this.openPanel('skills') },
+            { id: 'tools', label: '打开 Tools', icon: '◭', group: '命令', run: () => this.openPanel('tools') },
+            { id: 'mcp', label: '打开 MCP', icon: '⬡', group: '命令', run: () => this.openPanel('mcp') },
+            { id: 'config', label: '打开 Configuration', icon: '◮', group: '命令', run: () => this.openPanel('config') },
+            { id: 'help', label: '快捷键帮助', icon: '?', group: '命令', shortcut: '⌘/', run: () => this.openHelp() },
+        ];
+    }
+
+    async paletteLoadDynamic() {
+        const now = Date.now();
+        if (now - this._paletteCache.ts < 30000 && this._paletteCache.items.length) return this._paletteCache.items;
+        const fetchJson = (url) => fetch(url).then(r => r.ok ? r.json() : null).catch(() => null);
+        const [sessions, files, skills, tools, models] = await Promise.all([
+            fetchJson('/api/sessions'),
+            fetchJson('/api/files'),
+            fetchJson('/api/skills'),
+            fetchJson('/api/tools'),
+            fetchJson('/api/models'),
+        ]);
+        const items = [];
+        (sessions?.sessions || []).slice(0, 50).forEach(s => items.push({
+            id: `session:${s.path}`,
+            label: s.name,
+            meta: `${s.entries || 0} 条 · ${s.mtime ? new Date(s.mtime * 1000).toLocaleDateString() : ''}`,
+            icon: '§', group: '会话', run: () => this.loadSession(s.path),
+        }));
+        (files?.files || []).slice(0, 50).forEach(f => items.push({
+            id: `file:${f.filename}`, label: f.filename,
+            meta: f.size ? `${Math.round(f.size/1024)} KB` : '',
+            icon: '◫', group: '文件', run: () => this.openPanel('files'),
+        }));
+        (skills?.skills || []).forEach(s => items.push({
+            id: `skill:${s.name || s}`, label: s.name || s, icon: '◬', group: '技能',
+            run: () => this.openPanel('skills'),
+        }));
+        (tools?.tools || []).forEach(t => items.push({
+            id: `tool:${t.name || t}`, label: t.name || t, icon: '◭', group: '工具',
+            run: () => this.openPanel('tools'),
+        }));
+        (models?.models || []).slice(0, 30).forEach(m => {
+            const id = m.id || m;
+            items.push({
+                id: `model:${id}`, label: id, icon: '⬢', group: '模型',
+                run: () => this.selectModel(id),
+            });
+        });
+        this._paletteCache = { ts: now, items };
+        return items;
+    }
+
+    async openPalette() {
+        if (!this.paletteOverlay) return;
+        this.paletteOverlay.classList.add('active');
+        this.paletteInput.value = '';
+        this.paletteInput.focus();
+        this._paletteSelected = 0;
+        // Render static + cached immediately, then refresh dynamic in background.
+        this._paletteCurrentItems = this.paletteStaticCommands();
+        this.renderPalette();
+        const dynamic = await this.paletteLoadDynamic();
+        this._paletteCurrentItems = this.paletteStaticCommands().concat(dynamic);
+        this.renderPalette();
+    }
+
+    closePalette() {
+        this.paletteOverlay?.classList.remove('active');
+    }
+
+    renderPalette() {
+        if (!this.paletteList) return;
+        const q = (this.paletteInput?.value || '').trim();
+        let items = this._paletteCurrentItems;
+        if (q) {
+            const results = window.fuzzysort.go(q, items, { key: 'label', limit: 30, threshold: -10000 });
+            items = results.map(r => r.obj);
+        } else {
+            // Empty query: recent 5 sessions + commands
+            const cmds = items.filter(i => i.group === '命令');
+            const sessions = items.filter(i => i.group === '会话').slice(0, 5);
+            items = cmds.concat(sessions);
+        }
+        this._paletteFlat = items;
+        if (this._paletteSelected >= items.length) this._paletteSelected = Math.max(0, items.length - 1);
+        if (items.length === 0) {
+            this.paletteList.innerHTML = '<div class="palette-empty">没有匹配项</div>';
+            return;
+        }
+        const groups = {};
+        items.forEach((it, i) => { (groups[it.group] = groups[it.group] || []).push({ it, i }); });
+        const groupOrder = ['命令', '会话', '文件', '技能', '工具', '模型'];
+        const groupNames = groupOrder.filter(g => groups[g]);
+        this.paletteList.innerHTML = groupNames.map(g => `
+            <div class="palette-group">
+                <div class="palette-group-label">${g}</div>
+                ${groups[g].map(({ it, i }) => `
+                    <div class="palette-item" data-idx="${i}" aria-selected="${i === this._paletteSelected}">
+                        <span class="palette-item-icon">${it.icon || '·'}</span>
+                        <span class="palette-item-text">${this.escapeHtml(it.label)}</span>
+                        ${it.meta ? `<span class="palette-item-meta">${this.escapeHtml(it.meta)}</span>` : ''}
+                        ${it.shortcut ? `<span class="palette-item-shortcut">${it.shortcut}</span>` : ''}
+                    </div>
+                `).join('')}
+            </div>
+        `).join('');
+        this.paletteList.querySelectorAll('.palette-item').forEach(el => {
+            el.addEventListener('mouseenter', () => {
+                this._paletteSelected = Number(el.dataset.idx);
+                this.renderPalette();
+            });
+            el.addEventListener('click', () => this.executePaletteSelection());
+        });
+        // Scroll selected into view
+        const sel = this.paletteList.querySelector(`[data-idx="${this._paletteSelected}"]`);
+        sel?.scrollIntoView({ block: 'nearest' });
+    }
+
+    movePaletteSelection(delta) {
+        const max = (this._paletteFlat?.length || 0) - 1;
+        if (max < 0) return;
+        this._paletteSelected = (this._paletteSelected + delta + max + 1) % (max + 1);
+        this.renderPalette();
+    }
+
+    executePaletteSelection() {
+        const item = this._paletteFlat?.[this._paletteSelected];
+        if (!item) return;
+        this.closePalette();
+        try { item.run(); } catch (e) { console.error('palette run failed', e); }
+    }
+
+    // Palette-target helpers (will be expanded in later tasks)
+    clearView() {
+        // Visual-only clear; does NOT delete history.
+        if (this.chatContainer) {
+            this.chatContainer.querySelectorAll('.message').forEach(el => el.remove());
+        }
+    }
+    openHelp() {
+        // Real help modal wired in Task 21. For now, just toast.
+        document.getElementById('helpModal')?.classList.add('active');
+    }
+    exportMarkdown() {
+        // Real export route added in Task 24. For now, just open the URL — server returns 404 until then.
+        window.open('/api/sessions/current/export.md', '_blank');
     }
 }
 
