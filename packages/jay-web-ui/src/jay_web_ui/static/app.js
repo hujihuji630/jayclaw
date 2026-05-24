@@ -106,6 +106,33 @@ class ChatApp {
         // Restore theme
         if (localStorage.getItem('jayclaw-theme') === 'light') document.body.classList.add('light');
 
+        // Drag-and-drop attach (D4)
+        let dragCounter = 0;
+        const dropOverlay = document.getElementById('dropOverlay');
+        const showOverlay = () => dropOverlay?.classList.add('active');
+        const hideOverlay = () => dropOverlay?.classList.remove('active');
+        document.addEventListener('dragenter', (e) => {
+            if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
+            dragCounter++;
+            showOverlay();
+        });
+        document.addEventListener('dragleave', () => {
+            dragCounter = Math.max(0, dragCounter - 1);
+            if (dragCounter === 0) hideOverlay();
+        });
+        document.addEventListener('dragover', (e) => {
+            if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+                e.preventDefault();
+            }
+        });
+        document.addEventListener('drop', (e) => {
+            if (!e.dataTransfer || e.dataTransfer.files.length === 0) return;
+            e.preventDefault();
+            dragCounter = 0;
+            hideOverlay();
+            this.handleFileSelect({ target: { files: e.dataTransfer.files } });
+        });
+
         this.loadHistory();
     }
 
