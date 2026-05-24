@@ -37,7 +37,9 @@ class TestMessage:
         """Test model_dump for basic message."""
         msg = Message(role="user", content="Hello")
         dumped = msg.model_dump()
-        assert dumped == {"role": "user", "content": "Hello"}
+        assert dumped["role"] == "user"
+        assert dumped["content"] == "Hello"
+        assert dumped["id"]  # auto-generated
 
     def test_model_dump_with_tool_calls(self):
         """Test model_dump with tool calls."""
@@ -57,6 +59,24 @@ class TestMessage:
         dumped = msg.model_dump()
         assert dumped["tool_call_id"] == "call_1"
         assert dumped["name"] == "search"
+
+    def test_message_has_unique_id_by_default(self):
+        """Each Message gets a unique uuid id automatically."""
+        a = Message(role='user', content='hi')
+        b = Message(role='user', content='hi')
+        assert a.id and b.id
+        assert a.id != b.id
+
+    def test_message_id_round_trips_through_model_dump(self):
+        """An explicit id passed in survives model_dump."""
+        m = Message(role='user', content='hi', id='custom-id-123')
+        d = m.model_dump()
+        assert d['id'] == 'custom-id-123'
+
+    def test_message_legacy_dict_without_id_still_constructible(self):
+        """Loading legacy session data should not raise when id is missing."""
+        m = Message(role='user', content='hi')
+        assert m.id is not None
 
 
 class TestInMemoryProvider:

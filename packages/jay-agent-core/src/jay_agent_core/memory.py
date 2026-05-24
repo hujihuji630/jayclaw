@@ -3,8 +3,14 @@
 Provides protocol for custom memory implementations with a default in-memory provider.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
+import uuid
+
+
+def _gen_message_id() -> str:
+    """uuid4 hex — globally unique enough for a single user's chat history."""
+    return uuid.uuid4().hex
 
 
 @dataclass
@@ -17,6 +23,7 @@ class Message:
         tool_calls: Optional tool calls (for assistant messages)
         tool_call_id: Optional tool call ID (for tool messages)
         name: Optional tool name (for tool messages)
+        id: Stable per-message identifier; auto-generated uuid4-hex.
     """
 
     role: str
@@ -24,10 +31,12 @@ class Message:
     tool_calls: list[dict[str, Any]] | None = None
     tool_call_id: str | None = None
     name: str | None = None
+    id: str = field(default_factory=_gen_message_id)
 
     def model_dump(self) -> dict[str, Any]:
-        """Convert to dict for LLM API."""
+        """Convert to dict for LLM API + persistence."""
         result: dict[str, Any] = {
+            "id": self.id,
             "role": self.role,
             "content": self.content,
         }
