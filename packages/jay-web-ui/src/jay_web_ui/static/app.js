@@ -1068,10 +1068,49 @@ def my_tool(arg: str) -> str:
         body.appendChild(meta);
         body.appendChild(contentDiv);
         body.appendChild(stepLog);
+
+        // D3 hover action row — Copy on all, Resend/Edit on user messages.
+        // Edit visibility is managed by _refreshEditButtons() after streaming ends.
+        const actions = document.createElement('div');
+        actions.className = 'message-actions';
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'message-action-btn';
+        copyBtn.dataset.action = 'copy';
+        copyBtn.title = '复制';
+        copyBtn.setAttribute('aria-label', 'Copy');
+        copyBtn.textContent = '⎘';
+        copyBtn.addEventListener('click', () => this.copyMessage(messageDiv));
+        actions.appendChild(copyBtn);
+        if (role === 'user') {
+            const resendBtn = document.createElement('button');
+            resendBtn.className = 'message-action-btn';
+            resendBtn.dataset.action = 'resend';
+            resendBtn.title = '重发';
+            resendBtn.setAttribute('aria-label', 'Resend');
+            resendBtn.textContent = '⟳';
+            resendBtn.addEventListener('click', () => this.resendMessage(messageDiv));
+            actions.appendChild(resendBtn);
+
+            const editBtn = document.createElement('button');
+            editBtn.className = 'message-action-btn';
+            editBtn.dataset.action = 'edit';
+            editBtn.title = '编辑';
+            editBtn.setAttribute('aria-label', 'Edit');
+            editBtn.hidden = true;  // _refreshEditButtons reveals only the latest user message's edit btn.
+            editBtn.textContent = '✎';
+            editBtn.addEventListener('click', () => this.editMessage(messageDiv));
+            actions.appendChild(editBtn);
+        }
+        body.appendChild(actions);
+
+        // Store the raw text for Copy/Resend retrieval.
+        messageDiv.dataset.raw = content || '';
+
         messageDiv.appendChild(avatar);
         messageDiv.appendChild(body);
         this.chatContainer.appendChild(messageDiv);
         this.scrollToBottom();
+        if (role === 'user') this._refreshEditButtons();
         return messageDiv;
     }
 
@@ -1163,6 +1202,7 @@ def my_tool(arg: str) -> str:
         contentDiv.querySelector('.typing-indicator')?.remove();
         if (!contentDiv.dataset.content) contentDiv.dataset.content = '';
         contentDiv.dataset.content += text;
+        messageDiv.dataset.raw = contentDiv.dataset.content;
 
         // Throttle rerenders to ~200ms during streaming — avoids per-token reparses.
         if (!messageDiv._renderScheduled) {
@@ -1186,6 +1226,7 @@ def my_tool(arg: str) -> str:
             this.renderContent(contentDiv, contentDiv.dataset.content);
         }
         if (contentDiv) this.finalizeMessageRender(contentDiv);
+        this._refreshEditButtons();
     }
 
     updateThinkingStatus(messageDiv, status) {
@@ -1949,6 +1990,80 @@ def my_tool(arg: str) -> str:
     exportMarkdown() {
         // Real export route added in Task 24. For now, just open the URL — server returns 404 until then.
         window.open('/api/sessions/current/export.md', '_blank');
+    }
+
+    // ── D3: copy / resend / edit ───────────────────────────────────
+    _refreshEditButtons() {
+        // Hide all edit buttons; then reveal only the latest user message's.
+        if (!this.chatContainer) return;
+        this.chatContainer
+            .querySelectorAll('.message-action-btn[data-action="edit"]')
+            .forEach((b) => { b.hidden = true; });
+        const userMsgs = this.chatContainer.querySelectorAll('.message.user');
+        const last = userMsgs[userMsgs.length - 1];
+        const editBtn = last?.querySelector('.message-action-btn[data-action="edit"]');
+        if (editBtn) editBtn.hidden = false;
+    }
+
+    async copyMessage(messageDiv) {
+        const raw = messageDiv.dataset.raw || '';
+        try {
+            await navigator.clipboard.writeText(raw);
+            const btn = messageDiv.querySelector('.message-action-btn[data-action="copy"]');
+            if (btn) {
+                const orig = btn.textContent;
+                btn.textContent = '✓';
+                setTimeout(() => { btn.textContent = orig; }, 1500);
+            }
+        } catch (_) { /* clipboard denied; silent */ }
+    }
+
+    async resendMessage(messageDiv) {
+        const id = messageDiv.dataset.messageId;
+        const raw = messageDiv.dataset.raw || '';
+        if (!id) {
+            this.showToast('该消息没有 id，无法重发', 'error');
+            return;
+        }
+        // Truncate everything from this user message onward by truncating
+        // AFTER the previous message (so this user msg + everything after disappears).
+        const allMessages = Array.from(this.chatContainer.querySelectorAll('.message'));
+        const idx = allMessages.indexOf(messageDiv);
+        const prev = idx > 0 ? allMessages[idx - 1] : null;
+        const truncateAfter = prev?.dataset.messageId || null;
+
+        try {
+            if (truncateAfter) {
+                const r = await fetch('/api/messages/truncate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ after_id: truncateAfter }),
+                });
+                if (!r.ok) { this.showToast('截断失败', 'error'); return; }
+            } else {
+                // No predecessor — clear all server history.
+                await fetch('/api/history', { method: 'DELETE' });
+            }
+        } catch (e) {
+            this.showToast('截断失败', 'error');
+            return;
+        }
+
+        // Remove DOM messages from idx onward (including the user message we're resending).
+        for (let i = idx; i < allMessages.length; i++) allMessages[i].remove();
+
+        // Refill input with raw text and place cursor at the end.
+        this.messageInput.value = raw;
+        this.messageInput.dispatchEvent(new Event('input'));
+        this.messageInput.focus();
+        this.messageInput.selectionStart = this.messageInput.selectionEnd = raw.length;
+        this._refreshEditButtons();
+    }
+
+    async editMessage(messageDiv) {
+        // Spec treats Edit as Resend with cursor-at-end. The user can then modify
+        // and press Enter to re-send.
+        return this.resendMessage(messageDiv);
     }
 }
 
