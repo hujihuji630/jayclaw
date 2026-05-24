@@ -39,7 +39,10 @@ class ChatResponse(BaseModel):
 class StreamChunk(BaseModel):
     """Streaming response chunk."""
 
-    type: Literal["start", "token", "done", "error", "status"]
+    type: Literal["start", "token", "done", "error", "status", "message_start", "message_end"]
+    id: str | None = None
+    role: Literal["user", "assistant", "system"] | None = None
     content: str | None = None
     error: str | None = None
     status: str | None = None
+    total_tokens: int | None = None

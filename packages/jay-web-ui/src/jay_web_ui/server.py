@@ -334,14 +334,27 @@ class ChatServer:
                     type="status",
                     status=f"⚙ 调用视觉模型 {self.vision_model} 处理 {img_count} 张图片...",
                 ))
+                assistant_msg = ChatMessage(role="assistant", content="")
+                yield self._format_sse(StreamChunk(
+                    type="message_start", id=assistant_msg.id, role="assistant",
+                ))
                 content = await self._vision_fallback(agent_content, message)
                 yield self._format_sse(StreamChunk(type="token", content=content))
-                self.history.append(ChatMessage(role="assistant", content=content))
+                assistant_msg.content = content
+                self.history.append(assistant_msg)
                 self._record_to_session("assistant", content)
+                yield self._format_sse(StreamChunk(
+                    type="message_end", id=assistant_msg.id,
+                ))
                 yield self._format_sse(StreamChunk(type="done"))
                 return
 
             yield self._format_sse(StreamChunk(type="status", status="正在思考..."))
+
+            assistant_msg = ChatMessage(role="assistant", content="")
+            yield self._format_sse(StreamChunk(
+                type="message_start", id=assistant_msg.id, role="assistant",
+            ))
 
             if self.agent:
                 content = ""
@@ -431,8 +444,12 @@ class ChatServer:
                 yield self._format_sse(StreamChunk(type="token", content=content))
 
             if content:
-                self.history.append(ChatMessage(role="assistant", content=content))
+                assistant_msg.content = content
+                self.history.append(assistant_msg)
                 self._record_to_session("assistant", content)
+                yield self._format_sse(StreamChunk(
+                    type="message_end", id=assistant_msg.id,
+                ))
 
             yield self._format_sse(StreamChunk(type="done"))
 

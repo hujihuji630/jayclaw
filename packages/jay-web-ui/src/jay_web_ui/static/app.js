@@ -978,6 +978,15 @@ def my_tool(arg: str) -> str:
                             }
                             fullContent += data.content;
                             this.appendToMessage(assistantMsg, data.content);
+                        } else if (data.type === 'message_start' && data.id) {
+                            // Tag the DOM node with the message id (D3 needs this for truncate/edit).
+                            if (this._currentAssistantMsg) {
+                                this._currentAssistantMsg.dataset.messageId = data.id;
+                            }
+                        } else if (data.type === 'message_end' && data.id) {
+                            // Final-pass render is triggered after the reader loop ends — nothing
+                            // extra to do here, but keep the case so unknown-event-type fallbacks
+                            // don't accidentally treat this as an error.
                         } else if (data.type === 'error') {
                             this.setMessageError(assistantMsg, data.error);
                         }
