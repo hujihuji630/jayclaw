@@ -1,0 +1,60 @@
+/* JayClaw "paper" syntax highlight theme — keyed to design tokens.
+   Apply via class="hljs language-XYZ". */
+
+.hljs { color: var(--text-primary); background: var(--bg-code); }
+.hljs-comment, .hljs-quote { color: var(--text-tertiary); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-section, .hljs-meta-keyword,
+.hljs-type, .hljs-built_in { color: var(--accent); }
+.hljs-string, .hljs-doctag, .hljs-meta-string, .hljs-regexp { color: var(--danger); }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: var(--code-number); }
+.hljs-variable, .hljs-template-variable, .hljs-attr, .hljs-attribute { color: var(--text-primary); }
+.hljs-title, .hljs-name, .hljs-class .hljs-title { color: color-mix(in srgb, var(--accent) 70%, black); font-weight: 600; }
+.hljs-tag, .hljs-tag .hljs-name { color: var(--text-secondary); }
+.hljs-meta { color: var(--text-tertiary); }
+.hljs-addition { background: var(--accent-soft); color: var(--accent); }
+.hljs-deletion { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+
+/* Code block chrome */
+.code-block {
+  position: relative;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin: 0.8em 0;
+  overflow: hidden;
+}
+.code-block-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--bg-code) 70%, var(--bg-surface));
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+.code-block-copy {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: transparent; border: none;
+  color: var(--text-tertiary); cursor: pointer;
+  padding: 2px 6px; border-radius: var(--radius-sm);
+  font-family: var(--font-mono); font-size: 0.6875rem;
+  text-transform: none; letter-spacing: 0;
+}
+.code-block-copy:hover { color: var(--accent); background: var(--bg-surface-hover); }
+.code-block-copy.copied { color: var(--accent); }
+.code-block pre { margin: 0; border-radius: 0; background: transparent; }
+
+.code-block.collapsed pre { max-height: calc(20 * 1.5em); overflow-y: hidden; }
+.code-block-expand {
+  display: none;
+  width: 100%; padding: 6px 10px;
+  background: var(--bg-surface);
+  border: none; border-top: 1px solid var(--border);
+  font: inherit; font-size: 0.75rem; color: var(--accent);
+  cursor: pointer;
+}
+.code-block.collapsed .code-block-expand { display: block; }
