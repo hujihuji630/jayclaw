@@ -319,9 +319,16 @@
         </div>
     </div>
 
+    <div class="palette-overlay" id="paletteOverlay" role="dialog" aria-modal="true">
+        <div class="palette">
+            <input class="palette-input" id="paletteInput" type="text" placeholder="搜索会话、文件、技能、命令..." autocomplete="off" spellcheck="false">
+            <div class="palette-list" id="paletteList"></div>
+        </div>
+    </div>
     <script src="/static/vendor/dompurify.min.js"></script>
     <script src="/static/vendor/marked.min.js"></script>
     <script src="/static/vendor/highlight.min.js"></script>
+    <script src="/static/vendor/fuzzysort.min.js"></script>
     <script src="/static/app.js"></script>
 </body>
 </html>
