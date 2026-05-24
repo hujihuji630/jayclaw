@@ -256,8 +256,10 @@ class ChatApp {
 
     // ── Theme ──────────────────────────────────────────────────────
     toggleTheme() {
-        document.body.classList.toggle('light');
-        localStorage.setItem('jayclaw-theme', document.body.classList.contains('light') ? 'light' : 'dark');
+        const root = document.documentElement;
+        const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+        root.dataset.theme = next;
+        localStorage.setItem('jayclaw-theme', next);
     }
 
     // ── New Chat ───────────────────────────────────────────────────
@@ -1351,7 +1353,7 @@ def my_tool(arg: str) -> str:
         if (typing) typing.remove();
         contentDiv.innerHTML = '';
         const span = document.createElement('span');
-        span.style.color = 'var(--warn)';
+        span.style.color = 'var(--danger)';
         span.textContent = `⚠ ${error}`;
         contentDiv.appendChild(span);
     }
@@ -2074,11 +2076,9 @@ def my_tool(arg: str) -> str:
         }
     }
     openHelp() {
-        // Real help modal wired in Task 21. For now, just toast.
         document.getElementById('helpModal')?.classList.add('active');
     }
     exportMarkdown() {
-        // Real export route added in Task 24. For now, just open the URL — server returns 404 until then.
         window.open('/api/sessions/current/export.md', '_blank');
     }
 
