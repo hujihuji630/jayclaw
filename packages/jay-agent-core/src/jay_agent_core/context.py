@@ -165,6 +165,84 @@ class ContextManager:
         # TODO: Implement file watching
         pass
 
+    def compute_utilization(
+        self,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        config: 'CompressionConfig | None' = None,
+        previous_ratio: float | None = None,
+        model: str | None = None,
+    ) -> 'ContextUtilization':
+        """Compute context utilization with a per-message token cache.
+
+        Cache key is the message ``id``; messages without an id are tokenized
+        fresh each call. Reset via :meth:`invalidate_token_cache` on workspace
+        switch / new conversation / compact.
+        """
+        from .token_counter import count_tokens
+        import json as _json
+
+        # Lazy-init cache state so existing __init__ stays untouched.
+        if not hasattr(self, '_tok_cache'):
+            self._tok_cache: dict[str, int] = {}
+            self._cache_hits: int = 0
+            self._tokenize_calls: int = 0
+
+        total = 0
+        for msg in messages:
+            mid = msg.get('id')
+            cache_key = mid if mid else None
+            if cache_key and cache_key in self._tok_cache:
+                total += self._tok_cache[cache_key]
+                self._cache_hits += 1
+                continue
+            n = 0
+            content = msg.get('content') or ''
+            if isinstance(content, str):
+                n += count_tokens(content, model=model)
+            metadata = msg.get('metadata') or {}
+            tool_calls = msg.get('tool_calls') or metadata.get('tool_calls')
+            if tool_calls:
+                try:
+                    n += count_tokens(_json.dumps(tool_calls, ensure_ascii=False), model=model)
+                except (TypeError, ValueError):
+                    pass
+            tool_name = msg.get('name') or metadata.get('name')
+            if isinstance(tool_name, str) and tool_name:
+                n += count_tokens(tool_name, model=model)
+            self._tokenize_calls += 1
+            if cache_key:
+                self._tok_cache[cache_key] = n
+            total += n
+
+        ratio = total / max_tokens if max_tokens > 0 else 0.0
+        if config is None:
+            config = CompressionConfig()
+        if ratio < config.user_decision_threshold:
+            zone = 'smart'
+        elif ratio < config.level1_threshold:
+            zone = 'warning'
+        else:
+            zone = 'compressed'
+        should_prompt = (
+            previous_ratio is not None
+            and previous_ratio < config.user_decision_threshold
+            and ratio >= config.user_decision_threshold
+        )
+        return ContextUtilization(
+            current_tokens=total,
+            max_tokens=max_tokens,
+            ratio=ratio,
+            zone=zone,
+            should_prompt_user=should_prompt,
+        )
+
+    def invalidate_token_cache(self) -> None:
+        """Clear the per-message token cache (call on workspace switch / new chat / compact)."""
+        self._tok_cache = {}
+        self._cache_hits = 0
+        self._tokenize_calls = 0
+
 
 # ---------------------------------------------------------------------------
 # Agent context hydration (for runtime context management)

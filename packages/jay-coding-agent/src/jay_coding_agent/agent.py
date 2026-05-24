@@ -454,6 +454,10 @@ class CodingAgent:
 
     def clear_history(self) -> None:
         """Clear conversation history on the inner agent and reset session."""
+        try:
+            self.context_manager.invalidate_token_cache()
+        except AttributeError:
+            pass
         if hasattr(self.agent, "clear_history"):
             self.agent.clear_history()
         from jay_agent_core.session import Session
@@ -471,6 +475,10 @@ class CodingAgent:
         Raises:
             ValueError: If path does not exist
         """
+        try:
+            self.context_manager.invalidate_token_cache()
+        except AttributeError:
+            pass
         new_path = Path(new_workspace).resolve()
         if not new_path.exists():
             raise ValueError(f"Path does not exist: {new_path}")
@@ -846,6 +854,10 @@ Tools: {len(self.agent.registry)}
         ``compress_messages`` before passing them in, then maps the result back
         onto the agent's history.
         """
+        try:
+            self.context_manager.invalidate_token_cache()
+        except AttributeError:
+            pass
         messages = self.agent.history
         if not messages:
             self.ui.error("No messages to compact")

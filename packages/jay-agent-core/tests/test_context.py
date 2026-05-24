@@ -131,3 +131,33 @@ def test_find_context_files_hierarchy(temp_workspace):
 
     # Should find both
     assert len(files) >= 2
+
+
+def test_compute_utilization_caches_unchanged_messages():
+    """Calling compute_utilization twice with same messages should not re-tokenize."""
+    from jay_agent_core.context import ContextManager
+
+    cm = ContextManager()
+    msgs = [
+        {'id': 'a', 'role': 'user', 'content': 'hello ' * 100},
+        {'id': 'b', 'role': 'assistant', 'content': 'world ' * 100},
+    ]
+    u1 = cm.compute_utilization(msgs, max_tokens=8000, model='gpt-4')
+    u2 = cm.compute_utilization(msgs, max_tokens=8000, model='gpt-4')
+    assert u1.current_tokens == u2.current_tokens
+    assert cm._cache_hits >= 2, f"expected >=2 cache hits on second call, got {cm._cache_hits}"
+
+
+def test_compute_utilization_only_tokenizes_new_messages():
+    """Adding a single message and recomputing should only tokenize the new one."""
+    from jay_agent_core.context import ContextManager
+
+    cm = ContextManager()
+    msgs = [{'id': 'a', 'role': 'user', 'content': 'hello ' * 100}]
+    cm.compute_utilization(msgs, max_tokens=8000, model='gpt-4')
+
+    msgs.append({'id': 'b', 'role': 'assistant', 'content': 'world ' * 50})
+    cm._tokenize_calls = 0
+    cm.compute_utilization(msgs, max_tokens=8000, model='gpt-4')
+    # Only message 'b' should require tokenization the second pass.
+    assert cm._tokenize_calls == 1, f"expected only 1 tokenize call, got {cm._tokenize_calls}"
