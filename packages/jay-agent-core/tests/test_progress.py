@@ -51,7 +51,7 @@ def test_handler_init(tmp_path):
     ))
     assert result.ok is True
     assert result.data["total_steps"] == 3
-    assert (tmp_path / ".agents" / "progress.json").exists()
+    assert (tmp_path / ".jayclaw" / "progress.json").exists()
 
 
 def test_handler_advance(tmp_path):

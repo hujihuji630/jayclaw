@@ -9,7 +9,7 @@ from jay_messenger.base import MessengerType
 @pytest.fixture
 def adapter():
     """Create Slack adapter."""
-    with patch("pig_messenger.adapters.slack.AsyncWebClient"):
+    with patch("jay_messenger.adapters.slack.AsyncWebClient"):
         from jay_messenger.adapters.slack import SlackMessengerAdapter
 
         adapter = SlackMessengerAdapter(bot_token="xoxb-test", signing_secret="secret")

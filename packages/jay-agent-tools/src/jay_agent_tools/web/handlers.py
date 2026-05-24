@@ -1,10 +1,13 @@
 """Web tool handlers."""
 
+import logging
 from typing import Any
 
 from jay_agent_core.tools.base import ToolResult
 
 from .providers.base import ReaderProvider, SearchProvider
+
+logger = logging.getLogger(__name__)
 
 
 async def handle_search_web(
@@ -174,7 +177,7 @@ async def handle_search_zhihu(
                 lines.append(f"{i}. {r.title}\n   {r.url}\n   {r.snippet}\n")
             return ToolResult(ok=True, data="\n".join(lines))
     except Exception:
-        pass
+        logger.warning("default search provider failed; falling back to BaiduProvider", exc_info=True)
 
     # Fallback 1: 百度搜索
     try:
@@ -187,7 +190,7 @@ async def handle_search_zhihu(
                 lines.append(f"{i}. {r.title}\n   {r.url}\n   {r.snippet}\n")
             return ToolResult(ok=True, data="\n".join(lines))
     except Exception:
-        pass
+        logger.warning("BaiduProvider failed; trying next fallback", exc_info=True)
 
     # Fallback: 知乎搜索
     try:

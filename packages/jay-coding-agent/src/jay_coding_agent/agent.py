@@ -1,5 +1,6 @@
 """Coding agent with file operations and code generation."""
 
+import logging
 from pathlib import Path
 
 from jay_agent_core import (
@@ -14,7 +15,7 @@ from jay_agent_core import (
 from jay_agent_core.context import compress_messages, CompressionConfig
 from jay_agent_core.token_counter import count_tokens
 from jay_agent_core.tools import Tool
-from jay_llm import LLM
+from jay_llm import LLM, detect_context_window
 from jay_tui import ChatUI, InteractivePrompt
 
 from .billing import CostTracker
@@ -22,26 +23,16 @@ from .file_reference import FileReferenceParser
 from .resilience import create_profile_manager_from_env, get_profile_status
 from .tools import CodeTools, FileTools, ShellTools
 
-
-# Model context window sizes (tokens)
-MODEL_CONTEXT_WINDOWS = {
-    "gpt-4": 8192,
-    "gpt-4-32k": 32768,
-    "gpt-4-turbo": 128000,
-    "gpt-4o": 128000,
-    "gpt-3.5-turbo": 16385,
-    "claude-3-opus": 200000,
-    "claude-3-sonnet": 200000,
-    "claude-3-haiku": 200000,
-}
+logger = logging.getLogger(__name__)
 
 
-def get_context_window(model: str) -> int:
-    """Get context window size for a model."""
-    for key, size in MODEL_CONTEXT_WINDOWS.items():
-        if key in model.lower():
-            return size
-    return 128000  # Default to 128k for unknown models
+def get_context_window(model: str, provider: str | None = None) -> int:
+    """Resolve a model's context window size.
+
+    Thin wrapper over :func:`jay_llm.detect_context_window` kept for backward
+    compatibility with previous callers in this package.
+    """
+    return detect_context_window(model, provider)
 
 
 class CodingAgent:
@@ -141,7 +132,8 @@ class CodingAgent:
 
         def _compress_fn(messages):
             model = _llm.config.model
-            max_tokens = get_context_window(model)
+            provider = getattr(_llm.config, "provider", None)
+            max_tokens = get_context_window(model, provider)
             text = " ".join(str(m) for m in messages)
             current_tokens = count_tokens(text, model=model)
             return compress_messages(messages, current_tokens, max_tokens, _config)
@@ -214,6 +206,13 @@ class CodingAgent:
                 timeout=60.0,
             )
 
+        # Register delegate tool with LLM and read-only tools injected
+        self._register_delegate_tool(tools)
+
+        # Initialize MCP
+        from jay_agent_core.mcp import MCPManager
+        self.mcp_manager = MCPManager(self.workspace)
+        self._init_mcp_sync()
 
         # Initialize extension manager
         self.extension_manager = None
@@ -240,46 +239,176 @@ class CodingAgent:
 
         # Standard extension paths
         ext_paths = [
-            self.workspace / ".agents" / "extensions",
+            self.workspace / ".jayclaw" / "extensions",
             self.workspace / ".pi" / "extensions",
-            Path.home() / ".agents" / "extensions",
+            Path.home() / ".jayclaw" / "extensions",
         ]
 
         for path in ext_paths:
             if path.exists():
                 self.extension_manager.load_from_directory(path)
 
+    def _init_mcp_sync(self):
+        """Load MCP config and start servers synchronously."""
+        import asyncio
+        from jay_agent_core.mcp import load_mcp_config
+
+        configs = load_mcp_config(self.workspace)
+        if not configs:
+            return
+
+        async def _start():
+            await self.mcp_manager.load_and_start()
+            registered = self.mcp_manager.register_tools(self.agent.registry_enhanced)
+            return registered
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                return
+            registered = loop.run_until_complete(_start())
+        except RuntimeError:
+            registered = asyncio.run(_start())
+
+        if registered and self.verbose:
+            print(f"✓ MCP: {len(registered)} tools from {len(self.mcp_manager._servers)} servers")
+
+    def _register_delegate_tool(self, tools):
+        """Register delegate tool with LLM and read-only child tools injected."""
+        from jay_agent_core.tools.base import ToolResult as _TR
+        from jay_agent_core.tools.handlers_delegate import HANDLERS as _DH
+
+        handler = _DH.get("delegate")
+        if not handler:
+            return
+
+        # Build read-only tool specs for child agent
+        readonly_names = {"read_file", "list_files", "grep_files", "find_files", "search_files"}
+        child_tools = []
+        for t in tools:
+            if t.name in readonly_names:
+                def _make(tool_obj):
+                    async def _h(args, user_id=None, meta=None, cancel=None):
+                        try:
+                            result = await tool_obj.aexecute(**args)
+                            return _TR(ok=True, data=result)
+                        except Exception as e:
+                            return _TR(ok=False, error=str(e))
+                    return _h
+                child_tools.append({
+                    "name": t.name,
+                    "handler": _make(t),
+                    "schema": t.to_openai_schema(),
+                    "is_core": True,
+                    "timeout": 30.0,
+                })
+
+        llm_ref = self.llm
+        workspace_ref = str(self.workspace)
+
+        async def _delegate_handler(args, user_id=None, meta=None, cancel=None):
+            meta = {**(meta or {}), "llm": llm_ref, "workspace": workspace_ref, "child_tools": child_tools}
+            return await handler(args, user_id or "", meta, cancel)
+
+        # Find delegate schema from TOOL_SCHEMAS
+        from jay_agent_core.tools.schemas import TOOL_SCHEMAS
+        delegate_schema = next((s for s in TOOL_SCHEMAS if s["function"]["name"] == "delegate"), None)
+        if delegate_schema:
+            self.agent.registry_enhanced.register(
+                name="delegate",
+                handler=_delegate_handler,
+                schema=delegate_schema,
+                is_core=True,
+                timeout=120.0,
+            )
+
     def _get_system_prompt(self) -> str:
-        """Get system prompt for coding agent."""
-        default_prompt = f"""\
-You are an expert coding assistant with access to file operations, code generation, shell commands, and web tools.
+        """Get system prompt for coding agent using structured context blocks."""
+        from datetime import datetime
 
-Workspace: {self.workspace}
+        from jay_agent_core.context import split_agents_md
+        from jay_agent_core.context_blocks import ContextAssembler, ContextBlock
 
-Available capabilities:
-- Read and write files
-- Generate and modify code
-- Execute shell commands with run_command
-- Analyze and explain code
-- Search the web with search_web
-- Read webpage content with read_webpage
+        model = self.llm.config.model
+        provider = getattr(self.llm.config, "provider", None)
+        context_window = get_context_window(model, provider)
+        system_budget = int(context_window * 0.20)
 
-Important rules:
-- For weather queries, ALWAYS use run_command to call curl: run_command("curl -s wttr.in/<city>?format=3") — this is fast and reliable. For example: run_command("curl -s wttr.in/Hangzhou?format=3")
-- For other real-time information, use search_web
-- Be helpful, precise, and always confirm destructive operations
-- When generating code, provide clean, well-documented, production-ready code
-"""
+        assembler = ContextAssembler(total_budget=system_budget, model=model)
 
-        # Build with context files
-        prompt = self.context_manager.build_system_prompt(default_prompt)
+        # P1: Identity — who the agent is and where it works
+        identity = (
+            f"You are an expert coding assistant with access to file operations, "
+            f"code generation, shell commands, and web tools.\n"
+            f"Workspace: {self.workspace}"
+        )
+        assembler.add_block(ContextBlock(type="identity", content=identity, priority=1, compressible=False))
 
-        # Add skills information if available
+        # P1: Constraints — hard rules (from AGENTS.md Always Loaded or defaults)
+        default_constraints = (
+            "- Be helpful, precise, and always confirm destructive operations\n"
+            "- When generating code, provide clean, well-documented, production-ready code\n"
+            "- For weather queries, use run_command(\"curl -s wttr.in/<city>?format=3\")\n"
+            "- For other real-time information, use search_web\n"
+            "- Use `delegate` for tasks requiring broad exploration (searching 3+ files, "
+            "pattern finding across codebase, analyzing unfamiliar code areas). "
+            "Do NOT delegate when you already know the exact file/location or need to write files.\n"
+            "- Use `scratchpad` to record key findings, decisions, and next steps during "
+            "multi-step tasks. This ensures continuity if context resets."
+        )
+        agents_md = self.context_manager.load_agents_md()
+        if agents_md:
+            constraints, knowledge = split_agents_md(agents_md)
+            if constraints:
+                assembler.add_block(ContextBlock(type="constraints", content=constraints, priority=1, compressible=False))
+            else:
+                assembler.add_block(ContextBlock(type="constraints", content=default_constraints, priority=1, compressible=False))
+            if knowledge:
+                assembler.add_block(ContextBlock(type="project-context", content=knowledge, priority=3, source="AGENTS.md"))
+        else:
+            assembler.add_block(ContextBlock(type="constraints", content=default_constraints, priority=1, compressible=False))
+
+        # Check for SYSTEM.md override — if present, inject as high-priority block
+        system_md = self.context_manager.load_system_md()
+        if system_md:
+            assembler.add_block(ContextBlock(type="project-context", content=system_md, priority=2, source="SYSTEM.md", compressible=False))
+
+        # P4: Skills
         if self.skill_manager and len(self.skill_manager) > 0:
             skills_prompt = self.skill_manager.get_all_skills_prompt()
-            prompt += f"\n\n{skills_prompt}"
+            assembler.add_block(ContextBlock(type="skills", content=skills_prompt, priority=4))
 
-        return prompt
+        # P2: Active tools
+        if hasattr(self, 'agent') and hasattr(self.agent, 'registry_enhanced'):
+            schemas = self.agent.registry_enhanced.get_schemas() if len(self.agent.registry_enhanced) > 0 else []
+            names = [s.get("function", {}).get("name", "") for s in schemas if isinstance(s, dict)]
+            if names:
+                assembler.add_block(ContextBlock(
+                    type="active-tools",
+                    content="Currently activated: " + ", ".join(names),
+                    priority=2, compressible=False,
+                ))
+
+        # P3: Runtime context
+        runtime = f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        assembler.add_block(ContextBlock(type="runtime", content=runtime, priority=3, compressible=False))
+
+        # P2: Scratchpad — persistent notes from previous sessions
+        scratchpad_path = self.workspace / ".jayclaw" / "scratchpad.md"
+        if scratchpad_path.exists():
+            scratchpad_content = scratchpad_path.read_text(encoding="utf-8").strip()
+            if scratchpad_content:
+                assembler.add_block(ContextBlock(
+                    type="scratchpad", content=scratchpad_content,
+                    priority=2, compressible=False, source=".jayclaw/scratchpad.md",
+                ))
+
+        # P5: Appendix (APPEND_SYSTEM.md)
+        append_md = self.context_manager.load_append_system_md()
+        if append_md:
+            assembler.add_block(ContextBlock(type="appendix", content=append_md, priority=5, source="APPEND_SYSTEM.md"))
+
+        return assembler.assemble()
 
     # Base slash commands for tab completion
     BASE_COMMANDS = [
@@ -308,6 +437,8 @@ Important rules:
         "/resilience",
         "/cost",
         "/usage",
+        "/agents-init",
+        "/agents-summarize",
     ]
 
     def _build_commands(self) -> list[str]:
@@ -320,6 +451,13 @@ Important rules:
             for name in self.prompt_manager.list_templates():
                 commands.append(f"/{name}")
         return commands
+
+    def clear_history(self) -> None:
+        """Clear conversation history on the inner agent and reset session."""
+        if hasattr(self.agent, "clear_history"):
+            self.agent.clear_history()
+        from jay_agent_core.session import Session
+        self.session = Session(workspace=str(self.workspace))
 
     def change_workspace(self, new_workspace: str) -> str:
         """Change the working directory and reinitialize file/shell tools.
@@ -381,12 +519,30 @@ Important rules:
             from jay_llm import Message
             self.agent.history[0] = Message(role="system", content=new_prompt)
 
+        # Rebuild cost tracker so usage data is written to the new workspace
+        if self.cost_tracker is not None:
+            try:
+                self.cost_tracker = CostTracker(self.workspace)
+                self.agent.billing_hook = self.cost_tracker
+            except Exception:
+                # Cost tracking is best-effort — never block a workspace switch on it
+                pass
+
+        # Move file reference parser onto the new workspace
+        try:
+            self.file_ref_parser = FileReferenceParser(self.workspace)
+        except Exception:
+            logger.exception("file_ref_parser rebind failed after workspace switch")
+
         return str(self.workspace)
 
     def run_interactive(self) -> None:
         """Run interactive chat session."""
         self.ui.system(f"Workspace: {self.workspace}")
         self.ui.separator()
+
+        # Offer to initialize per-workspace AGENTS.md if missing
+        self._maybe_init_agents_md()
 
         # Set up interactive prompt with completion and history
         history_file = str(self.workspace / ".sessions" / ".input_history")
@@ -485,6 +641,8 @@ Important rules:
                 cleared = self.agent.message_queue.clear()
                 if cleared:
                     self.ui.system(f"\nCleared {len(cleared)} queued messages")
+            # Offer to summarize this session into AGENTS.md
+            self._maybe_summarize_to_agents_md()
             self.ui.system("\nGoodbye!")
 
     def _handle_command(self, command: str) -> None:
@@ -615,6 +773,12 @@ Tools: {len(self.agent.registry)}
             extra_goal = parts[1] if len(parts) > 1 else ""
             self._generate_handoff(extra_goal)
 
+        elif cmd.startswith("/agents-init"):
+            self._init_agents_md_now(force=True)
+
+        elif cmd.startswith("/agents-summarize"):
+            self._summarize_to_agents_md_now()
+
         elif cmd.startswith("/"):
             # Check if it's a prompt template
             template_name = cmd.lstrip("/").split()[0]
@@ -676,7 +840,12 @@ Tools: {len(self.agent.registry)}
         self.ui.system(f"  Saved to: {save_path}")
 
     def _compact_session(self, instructions: str | None):
-        """Compact session messages using context compression."""
+        """Compact session messages using context compression.
+
+        Translates ``jay_llm.Message`` objects to the dict shape expected by
+        ``compress_messages`` before passing them in, then maps the result back
+        onto the agent's history.
+        """
         messages = self.agent.history
         if not messages:
             self.ui.error("No messages to compact")
@@ -686,12 +855,40 @@ Tools: {len(self.agent.registry)}
 
         # Force compression by setting ratio to 1.0 (triggers Level 2)
         model = self.llm.config.model
-        max_tokens = get_context_window(model)
-        compressed = compress_messages(messages, max_tokens, max_tokens, CompressionConfig())
+        provider = getattr(self.llm.config, "provider", None)
+        max_tokens = get_context_window(model, provider)
 
-        self.agent.history = compressed
+        # Convert Message → dict so compress_messages can call .get(...)
+        msg_dicts = []
+        for m in messages:
+            entry = {"role": m.role, "content": m.content or ""}
+            meta = getattr(m, "metadata", None) or {}
+            if "tool_calls" in meta:
+                entry["tool_calls"] = meta["tool_calls"]
+            if "name" in meta:
+                entry["name"] = meta["name"]
+            msg_dicts.append(entry)
 
-        self.ui.system(f"✓ Compacted: {before} messages → {len(compressed)} messages")
+        compressed_dicts = compress_messages(
+            msg_dicts, max_tokens, max_tokens, CompressionConfig()
+        )
+
+        from jay_llm import Message as LLMMessage
+        new_history = []
+        for d in compressed_dicts:
+            meta: dict = {}
+            if "tool_calls" in d:
+                meta["tool_calls"] = d["tool_calls"]
+            if "name" in d:
+                meta["name"] = d["name"]
+            new_history.append(LLMMessage(
+                role=d["role"],
+                content=d.get("content") or "",
+                metadata=meta or None,
+            ))
+        self.agent.history = new_history
+
+        self.ui.system(f"✓ Compacted: {before} messages → {len(new_history)} messages")
 
     def _list_sessions(self):
         """List available sessions."""
@@ -709,7 +906,7 @@ Tools: {len(self.agent.registry)}
             sessions_text += "\n\n... (showing most recent 20)"
 
         self.ui.panel(sessions_text, title=f"Available Sessions ({len(sessions)})")
-        self.ui.system("Use `pig-code --resume` to select a session")
+        self.ui.system("Use `jay-code --resume` to select a session")
 
     def _show_session_info(self):
         """Show session information."""
@@ -760,7 +957,7 @@ Cost: ${info["metadata"].get("cost", 0.0):.4f}
 
         if len(self.skill_manager) == 0:
             self.ui.system("No skills found")
-            self.ui.system("Create skills in .agents/skills/skill-name/SKILL.md")
+            self.ui.system("Create skills in .jayclaw/skills/skill-name/SKILL.md")
             return
 
         skills_text = "**Available Skills**\n\n"
@@ -779,7 +976,7 @@ Cost: ${info["metadata"].get("cost", 0.0):.4f}
 
         if len(self.extension_manager.extensions) == 0:
             self.ui.system("No extensions loaded")
-            self.ui.system("Place extensions in .agents/extensions/")
+            self.ui.system("Place extensions in .jayclaw/extensions/")
             return
 
         ext_text = "**Loaded Extensions**\n\n"
@@ -862,9 +1059,9 @@ Files are automatically read and added to context!
 **Features:**
 
 • Sessions auto-save to .sessions/
-• Extensions auto-load from .agents/extensions/
-• Skills auto-discover from .agents/skills/
-• Prompts auto-load from .agents/prompts/
+• Extensions auto-load from .jayclaw/extensions/
+• Skills auto-discover from .jayclaw/skills/
+• Prompts auto-load from .jayclaw/prompts/
 • Context auto-load from AGENTS.md, SYSTEM.md
 • Use /tree to navigate conversation history
 • Use /fork to create alternate branches
@@ -876,7 +1073,7 @@ Files are automatically read and added to context!
         """List available prompt templates."""
         if not self.prompt_manager or len(self.prompt_manager) == 0:
             self.ui.system("No prompts found")
-            self.ui.system("Create prompts in .agents/prompts/*.md")
+            self.ui.system("Create prompts in .jayclaw/prompts/*.md")
             return
 
         prompts_text = "**Available Prompt Templates**\n\n"
@@ -1053,7 +1250,7 @@ Most providers support API keys directly.
 
 For subscription login (Claude Pro, ChatGPT Plus):
 - Set up OAuth app in provider console
-- Configure client_id/secret in ~/.agents/oauth_providers.json
+- Configure client_id/secret in ~/.jayclaw/oauth_providers.json
 - Then use /login
 
 For now, use API keys:
@@ -1196,8 +1393,8 @@ Theme: {config.theme}
 
 **Config Files**
 
-Global: ~/.agents/config.json
-Project: .agents/config.json
+Global: ~/.jayclaw/config.json
+Project: .jayclaw/config.json
         """
 
         self.ui.panel(config_text, title="Configuration")
@@ -1376,12 +1573,22 @@ In cooldown: {status["cooldown_profiles"]}
         self.ui.system(f"\nUsage data: {self.cost_tracker.usage_file}")
 
     def _show_context_status(self) -> None:
-        from jay_agent_core.context import compute_utilization, CompressionConfig
+        from jay_agent_core.context import compute_utilization
 
-        max_tokens = getattr(getattr(self, "llm", None), "context_window", None)
-        if max_tokens is None:
-            max_tokens = getattr(getattr(getattr(self, "llm", None), "config", None), "context_window", 8000)
-        util = compute_utilization(self.history, max_tokens=max_tokens)
+        history = getattr(self.agent, "history", []) or []
+        cfg = getattr(self.llm, "config", None)
+        model = getattr(cfg, "model", None)
+        provider = getattr(cfg, "provider", None)
+        max_tokens = detect_context_window(model, provider)
+        messages = [
+            {
+                "role": m.role,
+                "content": m.content,
+                "metadata": getattr(m, "metadata", None) or {},
+            }
+            for m in history
+        ]
+        util = compute_utilization(messages, max_tokens=max_tokens, model=model)
         self.ui.panel(
             f"Tokens: {util.current_tokens}/{util.max_tokens} ({util.percent}%)\n"
             f"Zone: {util.zone}",
@@ -1390,19 +1597,264 @@ In cooldown: {status["cooldown_profiles"]}
 
     def _generate_handoff(self, extra_goal: str = "") -> None:
         from .handoff import (
-            HandoffData,
             extract_handoff_data_from_history,
             generate_handoff,
         )
         from jay_agent_core.context import compute_utilization
 
-        progress_path = self.workspace / ".agents" / "progress.json"
-        data = extract_handoff_data_from_history(self.history, progress_path)
+        progress_path = self.workspace / ".jayclaw" / "progress.json"
+        history = getattr(self.agent, "history", []) or []
+        messages = [
+            {
+                "role": m.role,
+                "content": m.content,
+                "metadata": getattr(m, "metadata", None) or {},
+            }
+            for m in history
+        ]
+        data = extract_handoff_data_from_history(messages, progress_path)
         if extra_goal:
             data.goal = extra_goal
-        max_tokens = getattr(getattr(self, "llm", None), "context_window", None)
-        if max_tokens is None:
-            max_tokens = getattr(getattr(getattr(self, "llm", None), "config", None), "context_window", 8000)
-        util = compute_utilization(self.history, max_tokens=max_tokens)
+        cfg = getattr(self.llm, "config", None)
+        model = getattr(cfg, "model", None)
+        provider = getattr(cfg, "provider", None)
+        max_tokens = detect_context_window(model, provider)
+        util = compute_utilization(messages, max_tokens=max_tokens, model=model)
         path = generate_handoff(data, self.workspace, ratio=util.ratio)
         self.ui.system(f"Handoff written: {path}")
+
+    # ------------------------------------------------------------------
+    # Per-workspace AGENTS.md (init at session start, summarize at end)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _no_init_marker(workspace: Path) -> Path:
+        return workspace / ".jayclaw" / ".no-agents-md"
+
+    @staticmethod
+    def _no_summary_marker(workspace: Path) -> Path:
+        return workspace / ".jayclaw" / ".no-summary"
+
+    def _maybe_init_agents_md(self) -> None:
+        """At session start: if no AGENTS.md anywhere up the tree, ask whether to generate one."""
+        if getattr(self, "_skip_agents_init", False):
+            return
+        try:
+            existing = self.context_manager.find_context_files("AGENTS.md")
+        except Exception:
+            return
+        if existing:
+            return
+        if self._no_init_marker(self.workspace).exists():
+            return
+
+        self.ui.panel(
+            "当前工作目录没有 AGENTS.md。\n\n"
+            "AGENTS.md 是这个目录专属的「地图」：项目结构 + 硬约束 + 历史教训，"
+            "Agent 启动时会自动注入到 system prompt。\n\n"
+            "请选择：\n"
+            "  [g] 现在生成（扫描目录 + 一次 LLM 调用起草，写入 ./AGENTS.md）\n"
+            "  [s] 本次跳过（下次进入该目录时再问）\n"
+            "  [n] 永不为该目录生成（写一个标记文件 .jayclaw/.no-agents-md，今后不再问）",
+            title="AGENTS.md",
+        )
+        try:
+            from jay_tui.prompt import Prompt
+            answer = Prompt().ask(
+                "请输入 g=生成 / s=本次跳过 / n=永不",
+                choices=["g", "s", "n"],
+                default="s",
+            ).strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            self.ui.system("Skipped AGENTS.md initialization.")
+            self._skip_agents_init = True
+            return
+        except Exception as exc:
+            self.ui.error(f"Prompt failed: {exc}")
+            self._skip_agents_init = True
+            return
+
+        if answer == "g":
+            self._init_agents_md_now(force=False)
+        elif answer == "n":
+            try:
+                marker = self._no_init_marker(self.workspace)
+                marker.parent.mkdir(exist_ok=True)
+                marker.write_text("", encoding="utf-8")
+                self.ui.system(f"Marker written: {marker}")
+            except OSError as exc:
+                self.ui.error(f"Failed to write marker: {exc}")
+        else:
+            self._skip_agents_init = True
+
+    def _init_agents_md_now(self, force: bool = False) -> None:
+        """Run the initial AGENTS.md generation. force=True overrides existing AGENTS.md after a confirm."""
+        from .agents_md import generate_initial
+
+        target = self.workspace / "AGENTS.md"
+        if target.exists() and not force:
+            self.ui.error(f"{target} already exists. Use /agents-init to overwrite.")
+            return
+        if target.exists() and force:
+            try:
+                from jay_tui.prompt import Prompt
+                if not Prompt().confirm(
+                    f"Overwrite existing {target}?", default=False
+                ):
+                    self.ui.system("Cancelled.")
+                    return
+            except (KeyboardInterrupt, EOFError):
+                self.ui.system("Cancelled.")
+                return
+
+        self.ui.system("Scanning workspace and asking the LLM for an initial AGENTS.md...")
+        import asyncio
+
+        try:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        future = pool.submit(asyncio.run, generate_initial(self.workspace, self.llm))
+                        path = future.result()
+                else:
+                    path = loop.run_until_complete(generate_initial(self.workspace, self.llm))
+            except RuntimeError:
+                path = asyncio.run(generate_initial(self.workspace, self.llm))
+        except Exception as exc:
+            self.ui.error(f"AGENTS.md generation failed: {exc}")
+            return
+
+        self.ui.system(f"AGENTS.md written: {path}")
+
+        # Re-inject system prompt so the new AGENTS.md takes effect this session
+        try:
+            new_prompt = self._get_system_prompt()
+            self.agent.system_prompt = new_prompt
+            if self.agent.history and self.agent.history[0].role == "system":
+                from jay_llm import Message
+                self.agent.history[0] = Message(role="system", content=new_prompt)
+        except Exception as exc:
+            self.ui.error(f"Failed to refresh system prompt (file written, restart to apply): {exc}")
+
+    def _maybe_summarize_to_agents_md(self) -> None:
+        """At session end: if AGENTS.md exists and the session had real content, ask whether to append."""
+        try:
+            existing = self.context_manager.find_context_files("AGENTS.md")
+        except Exception:
+            return
+        if not existing:
+            return
+        if self._no_summary_marker(self.workspace).exists():
+            return
+
+        history = getattr(self.agent, "history", []) or []
+        user_turn_count = sum(
+            1 for m in history if (getattr(m, "role", None) or (m.get("role") if isinstance(m, dict) else None)) == "user"
+        )
+        if user_turn_count < 2:
+            return
+
+        try:
+            from jay_tui.prompt import Prompt
+            if not Prompt().confirm(
+                "Summarize this session into AGENTS.md?", default=False
+            ):
+                return
+        except (KeyboardInterrupt, EOFError):
+            return
+        except Exception:
+            return
+
+        self._summarize_to_agents_md_now()
+
+    def _summarize_to_agents_md_now(self) -> None:
+        """Run an LLM-driven summary and propose updates to AGENTS.md (with diff confirmation)."""
+        from .agents_md import append_session_summary
+
+        existing = []
+        try:
+            existing = self.context_manager.find_context_files("AGENTS.md")
+        except Exception:
+            logger.exception("find_context_files('AGENTS.md') raised; treating as none")
+
+        target: Path | None = None
+        # Prefer workspace-root AGENTS.md if present; fall back to the most-specific found.
+        candidate = self.workspace / "AGENTS.md"
+        if candidate.is_file():
+            target = candidate
+        elif existing:
+            target = existing[-1]
+
+        if target is None:
+            self.ui.error("No AGENTS.md found to summarize into. Run /agents-init first.")
+            return
+
+        history = getattr(self.agent, "history", []) or []
+        if not history:
+            self.ui.error("No conversation history to summarize.")
+            return
+
+        self.ui.system("Asking the LLM to extract durable lessons from this session...")
+        import asyncio
+
+        try:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        future = pool.submit(
+                            asyncio.run,
+                            append_session_summary(self.workspace, self.llm, history, target),
+                        )
+                        new_content, diff, parsed = future.result()
+                else:
+                    new_content, diff, parsed = loop.run_until_complete(
+                        append_session_summary(self.workspace, self.llm, history, target)
+                    )
+            except RuntimeError:
+                new_content, diff, parsed = asyncio.run(
+                    append_session_summary(self.workspace, self.llm, history, target)
+                )
+        except FileNotFoundError as exc:
+            self.ui.error(str(exc))
+            return
+        except Exception as exc:
+            self.ui.error(f"Session summary skipped: {exc}")
+            return
+
+        new_pitfalls = parsed.get("new_pitfalls") or []
+        new_constraints = parsed.get("new_constraints") or []
+
+        if not new_pitfalls and not new_constraints:
+            self.ui.system("No new durable lessons extracted — AGENTS.md unchanged.")
+            return
+
+        summary_lines = []
+        if new_constraints:
+            summary_lines.append(f"New constraints ({len(new_constraints)}):")
+            summary_lines.extend(f"  + {c}" for c in new_constraints)
+        if new_pitfalls:
+            summary_lines.append(f"New pitfalls ({len(new_pitfalls)}):")
+            summary_lines.extend(f"  + {p}" for p in new_pitfalls)
+        self.ui.panel("\n".join(summary_lines), title=f"Proposed for {target.name}")
+
+        if diff:
+            self.ui.panel(diff, title="Diff")
+
+        try:
+            from jay_tui.prompt import Prompt
+            if not Prompt().confirm(f"Write changes to {target}?", default=True):
+                self.ui.system("Discarded.")
+                return
+        except (KeyboardInterrupt, EOFError):
+            self.ui.system("Discarded.")
+            return
+
+        try:
+            target.write_text(new_content, encoding="utf-8")
+            self.ui.system(f"AGENTS.md updated: {target}")
+        except OSError as exc:
+            self.ui.error(f"Failed to write {target}: {exc}")

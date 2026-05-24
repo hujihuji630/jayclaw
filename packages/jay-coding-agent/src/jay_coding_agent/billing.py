@@ -1,8 +1,11 @@
 """Billing and cost tracking for coding agent."""
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class CostTracker:
@@ -26,7 +29,7 @@ class CostTracker:
             workspace: Workspace directory for saving usage data
         """
         self.workspace = Path(workspace) if workspace else Path.cwd()
-        self.usage_file = self.workspace / ".agents" / "usage.json"
+        self.usage_file = self.workspace / ".jayclaw" / "usage.json"
 
         # In-memory tracking
         self.llm_calls: list[dict[str, Any]] = []
@@ -43,7 +46,7 @@ class CostTracker:
                 self.llm_calls = data.get("llm_calls", [])
                 self.tool_calls = data.get("tool_calls", [])
             except Exception:
-                pass
+                logger.exception("usage file is corrupt; starting fresh: %s", self.usage_file)
 
     def _save_usage(self):
         """Save usage data to file."""

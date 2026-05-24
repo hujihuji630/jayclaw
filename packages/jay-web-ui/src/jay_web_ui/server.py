@@ -1,16 +1,50 @@
-"""Chat server with FastAPI."""
+"""Chat server with FastAPI.
+
+The HTTP routes have been split into ``jay_web_ui.routes`` submodules — this
+file holds the ``ChatServer`` class, the Host-header anti-DNS-rebinding
+middleware, and the streaming machinery that the chat route delegates to.
+
+Path-validation primitives (``_safe_join``, ``_check_workspace_path``, etc.)
+live in ``jay_web_ui.security`` and are re-exported here for backward
+compatibility with tests that imported them from this module before the split.
+"""
+
+from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from fastapi import FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .models import ChatMessage, ChatRequest, StreamChunk
+from .attachments import build_multimodal_content, process_attachments
+from .models import ChatMessage, StreamChunk
+from .routes import (
+    agents_md as agents_md_routes,
+    chat as chat_routes,
+    files as files_routes,
+    lifecycle as lifecycle_routes,
+    llm as llm_routes,
+    mcp as mcp_routes,
+    sessions as sessions_routes,
+    skills_tools as skills_tools_routes,
+    workspace as workspace_routes,
+)
+# Re-exported for backward compatibility — tests import these from jay_web_ui.server.
+from .security import (  # noqa: F401
+    SYSTEM_PATH_DENY_PREFIXES,
+    _allowed_workspace_roots,
+    _check_workspace_path,
+    _is_system_path,
+    _is_under_allowed_root,
+    _safe_join,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class ChatServer:
@@ -24,17 +58,21 @@ class ChatServer:
         port: int = 8000,
         host: str = "127.0.0.1",
         cors: bool = False,
+        cors_allow_origins: list[str] | None = None,
         theme: dict | None = None,
     ):
         """Initialize chat server.
 
         Args:
-            llm: LLM instance (from py-ai)
-            agent: Agent instance (from py-agent-core)
+            llm: LLM instance (from jay-llm)
+            agent: Agent instance (from jay-agent-core)
             title: Page title
             port: Server port
             host: Server host
             cors: Enable CORS
+            cors_allow_origins: Explicit list of allowed origins when ``cors`` is
+                True. When omitted, defaults to ``[f"http://{host}:{port}"]`` to
+                avoid the unsafe ``*`` + credentials combination.
             theme: UI theme customization
         """
         if not llm and not agent:
@@ -47,20 +85,52 @@ class ChatServer:
         self.host = host
         self.theme = theme or {}
 
-        # Create FastAPI app
+        # Vision model fallback (user-configured)
+        self.vision_model: str | None = None
+
         self.app = FastAPI(title=title)
 
-        # Enable CORS if requested
+        # Anti-DNS-rebinding: when bound to localhost, refuse requests whose
+        # Host header doesn't claim to be us. Without this, an attacker page
+        # at evil.com could resolve evil.com → 127.0.0.1 (DNS rebinding) and
+        # then drive our /api/* endpoints from any browser tab. We don't run
+        # this when host is 0.0.0.0 / a real LAN IP because there the user
+        # is explicitly opting into broader exposure.
+        if host in ("127.0.0.1", "localhost", "::1"):
+            allowed_hosts = {
+                f"127.0.0.1:{port}",
+                f"localhost:{port}",
+                f"[::1]:{port}",
+                # Browsers strip the default port for some schemes; tolerate
+                # the port-less form too.
+                "127.0.0.1",
+                "localhost",
+                "[::1]",
+            }
+
+            @self.app.middleware("http")
+            async def _enforce_host_header(request: Request, call_next):
+                host_header = (request.headers.get("host") or "").lower()
+                if host_header and host_header not in allowed_hosts:
+                    from fastapi.responses import JSONResponse
+                    return JSONResponse(
+                        status_code=400,
+                        content={"detail": f"unexpected Host header: {host_header}"},
+                    )
+                return await call_next(request)
+
+        # Enable CORS if requested. Never combine "*" with credentials — that
+        # combination is rejected by browsers and signals a misconfigured policy.
         if cors:
+            origins = cors_allow_origins or [f"http://{host}:{port}"]
             self.app.add_middleware(
                 CORSMiddleware,
-                allow_origins=["*"],
+                allow_origins=origins,
                 allow_credentials=True,
-                allow_methods=["*"],
-                allow_headers=["*"],
+                allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+                allow_headers=["Content-Type", "Authorization"],
             )
 
-        # Setup templates and static files
         self.base_dir = Path(__file__).parent
         self.templates = Jinja2Templates(directory=str(self.base_dir / "templates"))
         self.app.mount(
@@ -69,534 +139,237 @@ class ChatServer:
             name="static",
         )
 
-        # Conversation history
         self.history: list[ChatMessage] = []
 
         # Active generation state
         self._cancel_event: asyncio.Event | None = None
         self._active_task: asyncio.Task | None = None
 
-        # Setup routes
+        # Active AGENTS.md task (init / summarize) — cancelled by /api/agents-md/cancel
+        self._agents_md_task: asyncio.Task | None = None
+
         self._setup_routes()
 
     def _setup_routes(self):
-        """Setup API routes."""
+        """Mount HTTP routes from the ``routes/`` submodules.
 
-        @self.app.get("/api/models")
-        async def get_models():
-            """获取当前 API 可用的模型列表"""
-            # Get LLM config from agent or direct
-            llm = None
-            if self.agent:
-                if hasattr(self.agent, 'agent') and hasattr(self.agent.agent, 'llm'):
-                    llm = self.agent.agent.llm
-                elif hasattr(self.agent, 'llm'):
-                    llm = self.agent.llm
-            elif self.llm:
-                llm = self.llm
+        Order is purely cosmetic — FastAPI dispatch is path-based, not
+        registration-order — but grouping by concern keeps logs/openapi readable.
+        """
+        llm_routes.register(self)
+        lifecycle_routes.register(self)
+        files_routes.register(self)
+        workspace_routes.register(self)
+        sessions_routes.register(self)
+        agents_md_routes.register(self)
+        skills_tools_routes.register(self)
+        mcp_routes.register(self)
+        chat_routes.register(self)
 
-            if not llm or not hasattr(llm, 'config'):
-                return {"models": [], "current": "unknown"}
+    def _resolve_core_agent(self):
+        """Return the inner jay_agent_core Agent (carries the full history)."""
+        if not self.agent:
+            return None
+        if hasattr(self.agent, "agent") and getattr(self.agent.agent, "history", None) is not None:
+            return self.agent.agent
+        if getattr(self.agent, "history", None) is not None:
+            return self.agent
+        return None
 
+    def _resolve_llm(self):
+        """Return the underlying LLM instance, prefering the agent's LLM."""
+        if self.agent:
+            if hasattr(self.agent, "agent") and hasattr(self.agent.agent, "llm"):
+                return self.agent.agent.llm
+            if hasattr(self.agent, "llm"):
+                return self.agent.llm
+        return self.llm
+
+    def _agent_messages_for_tokens(self) -> tuple[list[dict], str | None]:
+        """Serialize the agent's real history (incl. system / tool_calls / tool results).
+
+        Falls back to ``self.history`` if the agent isn't reachable.
+        Returns (messages, model_name_for_tokenizer).
+        """
+        core_agent = self._resolve_core_agent()
+        llm = self._resolve_llm()
+        model = getattr(getattr(llm, "config", None), "model", None)
+
+        if core_agent is None:
+            messages = [{"role": m.role, "content": m.content} for m in self.history]
+            return messages, model
+
+        out: list[dict] = []
+        for msg in core_agent.history:
+            entry: dict = {"role": msg.role, "content": msg.content or ""}
+            metadata = getattr(msg, "metadata", None) or {}
+            if "tool_calls" in metadata:
+                entry["tool_calls"] = metadata["tool_calls"]
+            if "name" in metadata:
+                entry["name"] = metadata["name"]
+            out.append(entry)
+        return out, model
+
+    def _resolve_context_window(self, llm) -> int:
+        """Return the model's input-context window size in tokens.
+
+        Order: env override > model family table > provider default > 8192.
+        Never confuses ``config.max_tokens`` (output cap) with the context window.
+        """
+        try:
+            from jay_llm import detect_context_window
+        except ImportError:
+            return 8192
+
+        cfg = getattr(llm, "config", None) if llm else None
+        model = getattr(cfg, "model", None)
+        provider = getattr(cfg, "provider", None)
+        return detect_context_window(model, provider)
+
+    def _record_to_session(self, role: str, content: str) -> None:
+        """Persist a message to the agent's session tree (auto-saves to .sessions/)."""
+        if not self.agent or not hasattr(self.agent, "session"):
+            return
+        try:
+            self.agent.session.add_message(role, content)
+        except Exception:
+            logger.exception("session.add_message failed (role=%s); message not persisted", role)
+
+    async def _vision_fallback(self, multimodal_content: list, user_message: str) -> str:
+        """Use the vision model to directly answer the user's question about images.
+
+        Instead of describing images then passing to main model, the vision model
+        handles the full request in one call — much faster, no tool loop.
+        For large image sets, batches them and combines responses.
+        """
+        from jay_llm import LLM, Message as LLMMessage
+
+        llm = self._resolve_llm()
+        cfg = llm.config
+
+        vision_llm = LLM(
+            provider=cfg.provider,
+            api_key=cfg.api_key,
+            model=self.vision_model,
+            base_url=cfg.base_url,
+            temperature=cfg.temperature,
+            timeout=300,
+        )
+
+        image_blocks = [b for b in multimodal_content if b.get("type") == "image_url"]
+        text_blocks = [b for b in multimodal_content if b.get("type") == "text"]
+        user_text = "\n".join(b.get("text", "") for b in text_blocks) or user_message
+
+        # If <= 5 images, send all at once
+        if len(image_blocks) <= 5:
+            messages = [LLMMessage(role="user", content=multimodal_content)]
             try:
-                import httpx
-                base_url = (llm.config.base_url or "https://api.openai.com/v1").rstrip("/")
-                headers = {"Authorization": f"Bearer {llm.config.api_key}"}
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.get(f"{base_url}/models", headers=headers)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    models = [m["id"] for m in data.get("data", [])]
-                    models.sort()
-                    return {"models": models, "current": llm.config.model}
+                response = await vision_llm.achat(messages)
+                return response.content
             except Exception as e:
-                return {"models": [llm.config.model], "current": llm.config.model, "error": str(e)}
+                return f"[视觉模型调用失败: {e}]"
 
-        @self.app.post("/api/model")
-        async def set_model(request: Request):
-            """切换当前使用的模型"""
-            body = await request.json()
-            new_model = body.get("model", "").strip()
-            if not new_model:
-                return {"status": "error", "error": "model is required"}
+        # For many images, batch them and ask for content extraction per batch,
+        # then do a final call to answer the user's question.
+        MAX_PER_BATCH = 5
+        all_extractions: list[str] = []
 
-            # Get LLM from agent or direct
-            llm = None
-            if self.agent:
-                if hasattr(self.agent, 'agent') and hasattr(self.agent.agent, 'llm'):
-                    llm = self.agent.agent.llm
-                elif hasattr(self.agent, 'llm'):
-                    llm = self.agent.llm
-            elif self.llm:
-                llm = self.llm
+        for i in range(0, len(image_blocks), MAX_PER_BATCH):
+            batch = image_blocks[i:i + MAX_PER_BATCH]
+            batch_num = i // MAX_PER_BATCH + 1
+            total_batches = (len(image_blocks) + MAX_PER_BATCH - 1) // MAX_PER_BATCH
 
-            if not llm:
-                return {"status": "error", "error": "No LLM configured"}
-
-            # Recreate LLM with new model
-            from jay_llm import LLM
-            new_llm = LLM(
-                provider=llm.config.provider,
-                api_key=llm.config.api_key,
-                model=new_model,
-                base_url=llm.config.base_url,
-                temperature=llm.config.temperature,
+            prompt = (
+                f"（第 {batch_num}/{total_batches} 批，共 {len(image_blocks)} 页）"
+                "请提取图片中的所有文字、数据和结构，直接输出内容。"
             )
-
-            # Update the LLM reference
-            if self.agent:
-                if hasattr(self.agent, 'agent') and hasattr(self.agent.agent, 'llm'):
-                    self.agent.agent.llm = new_llm
-                elif hasattr(self.agent, 'llm'):
-                    self.agent.llm = new_llm
-            elif self.llm:
-                self.llm = new_llm
-
-            return {"status": "ok", "model": new_model}
-
-        @self.app.post("/api/interrupt")
-        async def interrupt(request: Request):
-            """Inject a steering message into the running agent."""
-            body = await request.json()
-            message = body.get("message", "").strip()
-            if not message:
-                return {"status": "error", "error": "message is required"}
-
-            core_agent = self.agent.agent if (self.agent and hasattr(self.agent, 'agent')) else self.agent
-            if not core_agent or not hasattr(core_agent, 'message_queue'):
-                return {"status": "error", "error": "Agent does not support message queue"}
-
-            core_agent.message_queue.add_steering(message)
-            return {"status": "ok", "queued": "steering"}
-
-        @self.app.post("/api/cancel")
-        async def cancel():
-            """Cancel the current agent generation."""
-            if self._cancel_event:
-                self._cancel_event.set()
-            if self._active_task and not self._active_task.done():
-                self._active_task.cancel()
-            return {"status": "ok"}
-
-        @self.app.get("/api/status")
-        async def get_status():
-            """Return whether agent is currently generating."""
-            return {"generating": self._active_task is not None and not self._active_task.done()}
-
-        @self.app.get("/", response_class=HTMLResponse)
-        async def home(request: Request):
-            """Serve chat UI."""
-            return self.templates.TemplateResponse(
-                request=request,
-                name="chat.html",
-                context={
-                    "title": self.title,
-                    "theme": self.theme,
-                    "model": self.llm.config.model if self.llm else (self.agent.llm.config.model if self.agent else "unknown"),
-                },
-            )
-
-        @self.app.post("/api/chat")
-        async def chat(request: ChatRequest):
-            """Handle chat message with SSE streaming."""
-            return StreamingResponse(
-                self._stream_response(request.message),
-                media_type="text/event-stream",
-            )
-
-        @self.app.get("/api/history")
-        async def get_history():
-            """Get chat history."""
-            return {"messages": [msg.model_dump() for msg in self.history]}
-
-        @self.app.delete("/api/history")
-        async def clear_history():
-            """Clear chat history."""
-            self.history.clear()
-            if self.agent:
-                self.agent.clear_history()
-            return {"status": "ok"}
-
-        @self.app.post("/api/upload")
-        async def upload_file(file: UploadFile = File(...)):
-            """Handle file upload."""
+            messages = [LLMMessage(
+                role="user",
+                content=[{"type": "text", "text": prompt}] + batch,
+            )]
             try:
-                content = await file.read()
-                filename = file.filename
-
-                # Store uploaded file (simplified - production would store properly)
-                upload_dir = Path(".uploads")
-                upload_dir.mkdir(exist_ok=True)
-
-                file_path = upload_dir / filename
-                file_path.write_bytes(content)
-
-                return {
-                    "status": "ok",
-                    "filename": filename,
-                    "size": len(content),
-                    "path": str(file_path),
-                }
+                resp = await vision_llm.achat(messages)
+                all_extractions.append(resp.content)
             except Exception as e:
-                return {"status": "error", "error": str(e)}
+                all_extractions.append(f"[第 {batch_num} 批解析失败: {e}]")
 
-        @self.app.get("/api/config")
-        async def get_config():
-            """返回当前 LLM 配置（隐藏 API Key）"""
-            # Get LLM from agent or direct
-            llm = None
-            if self.agent:
-                if hasattr(self.agent, 'agent') and hasattr(self.agent.agent, 'llm'):
-                    llm = self.agent.agent.llm
-                elif hasattr(self.agent, 'llm'):
-                    llm = self.agent.llm
-            elif self.llm:
-                llm = self.llm
+        extracted = "\n\n".join(all_extractions)
+        final_prompt = f"{user_text}\n\n--- 以下是文档内容 ---\n{extracted}"
+        try:
+            resp = await vision_llm.achat([LLMMessage(role="user", content=final_prompt)])
+            return resp.content
+        except Exception as e:
+            return f"文档内容提取结果：\n\n{extracted}\n\n[最终分析调用失败: {e}]"
 
-            if not llm or not hasattr(llm, 'config'):
-                return {}
-
-            cfg = llm.config
-            return {
-                "provider": cfg.provider,
-                "model": cfg.model,
-                "base_url": cfg.base_url or "（默认）",
-                "temperature": cfg.temperature,
-                "max_tokens": cfg.max_tokens or "（不限）",
-            }
-
-        @self.app.get("/api/skills")
-        async def get_skills():
-            if self.agent and hasattr(self.agent, 'skills'):
-                skills = [
-                    {"name": s.name, "description": getattr(s, 'description', '')}
-                    for s in (self.agent.skills or [])
-                ]
-                return {"skills": skills}
-            return {"skills": []}
-
-        @self.app.get("/api/workspace")
-        async def get_workspace():
-            if self.agent and hasattr(self.agent, 'workspace'):
-                return {"workspace": str(self.agent.workspace)}
-            return {"workspace": str(Path.cwd())}
-
-        @self.app.post("/api/workspace")
-        async def set_workspace(request: Request):
-            body = await request.json()
-            new_path = body.get("path", "").strip()
-            if not new_path:
-                return {"status": "error", "error": "path is required"}
-            try:
-                if hasattr(self.agent, 'change_workspace'):
-                    resolved = self.agent.change_workspace(new_path)
-                elif hasattr(self.agent, 'agent') and hasattr(self.agent.agent, 'change_workspace'):
-                    resolved = self.agent.change_workspace(new_path)
-                else:
-                    return {"status": "error", "error": "Agent does not support workspace change"}
-                return {"status": "ok", "workspace": resolved}
-            except ValueError as e:
-                return {"status": "error", "error": str(e)}
-
-        @self.app.get("/api/browse/native")
-        async def browse_native():
-            """Open a native OS directory picker and return the chosen path."""
-            import subprocess, sys, json, asyncio
-
-            # Run tkinter in a separate Python subprocess so it gets its own main thread
-            script = (
-                "import tkinter as tk; from tkinter import filedialog; "
-                "root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', True); "
-                "path = filedialog.askdirectory(title='选择工作目录'); "
-                "root.destroy(); "
-                "import json, sys; print(json.dumps(path or ''))"
-            )
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    sys.executable, "-c", script,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
-                path = json.loads(stdout.decode().strip())
-                if path:
-                    return {"status": "ok", "path": path}
-                return {"status": "cancelled"}
-            except Exception as e:
-                return {"status": "error", "error": str(e)}
-
-        @self.app.get("/api/browse")
-        async def browse_dirs(path: str = ""):
-            """Return subdirectories of a given path for the directory picker."""
-            import os
-            if not path:
-                # Return drive roots on Windows, / on Unix
-                if os.name == 'nt':
-                    import string
-                    drives = [f"{d}:\\" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")]
-                    return {"path": "", "dirs": drives, "parent": None}
-                else:
-                    path = "/"
-            p = Path(path)
-            if not p.exists() or not p.is_dir():
-                return {"error": f"Not a directory: {path}"}
-            try:
-                dirs = sorted(
-                    [str(child) for child in p.iterdir()
-                     if child.is_dir() and not child.name.startswith('.')],
-                    key=lambda x: x.lower()
-                )
-            except PermissionError:
-                dirs = []
-            parent = str(p.parent) if p.parent != p else None
-            return {"path": str(p), "dirs": dirs, "parent": parent}
-
-        @self.app.get("/api/tools")
-        async def get_tools():
-            core_agent = self.agent.agent if (self.agent and hasattr(self.agent, 'agent')) else self.agent
-            if core_agent and hasattr(core_agent, 'registry_enhanced'):
-                schemas = core_agent.registry_enhanced.get_schemas()
-                tools = [
-                    {"name": s["function"]["name"], "description": s["function"].get("description", "")}
-                    for s in schemas
-                ]
-                return {"tools": tools}
-            if self.agent and hasattr(self.agent, 'tools'):
-                tools = [
-                    {"name": t.name if hasattr(t, 'name') else str(t),
-                     "description": getattr(t, 'description', '')}
-                    for t in (self.agent.tools or [])
-                ]
-                return {"tools": tools}
-            return {"tools": []}
-
-        @self.app.post("/api/tools")
-        async def add_tool(request: Request):
-            """动态添加工具（通过 Python 代码）"""
-            body = await request.json()
-            code = body.get("code", "").strip()
-            if not code:
-                return {"status": "error", "error": "code is required"}
-
-            if "@tool" not in code:
-                return {"status": "error", "error": "代码必须包含 @tool 装饰器"}
-            if "def " not in code:
-                return {"status": "error", "error": "代码必须定义函数"}
-
-            try:
-                from jay_agent_core.tools import tool
-                namespace = {"tool": tool}
-                exec(code, namespace)
-
-                core_agent = self.agent.agent if hasattr(self.agent, 'agent') else self.agent
-                added_tools = []
-                for name, obj in namespace.items():
-                    if hasattr(obj, '__class__') and obj.__class__.__name__ == 'Tool':
-                        if not hasattr(obj, 'name') or not obj.name:
-                            return {"status": "error", "error": "工具必须有名称"}
-                        if not hasattr(obj, 'func') or not callable(obj.func):
-                            return {"status": "error", "error": "工具必须有可调用函数"}
-
-                        # Add to legacy registry
-                        core_agent.add_tool(obj)
-
-                        # Also register to registry_enhanced so arun() can use it
-                        if hasattr(core_agent, 'registry_enhanced'):
-                            def make_handler(t):
-                                async def _handler(args, user_id=None, meta=None, cancel=None):
-                                    from jay_agent_core.tools.base import ToolResult
-                                    try:
-                                        result = await t.aexecute(**args)
-                                        return ToolResult(ok=True, data=result)
-                                    except Exception as e:
-                                        return ToolResult(ok=False, error=str(e))
-                                return _handler
-
-                            core_agent.registry_enhanced.register(
-                                name=obj.name,
-                                handler=make_handler(obj),
-                                schema=obj.to_openai_schema(),
-                                is_core=True,
-                                timeout=60.0,
-                            )
-
-                        added_tools.append(obj.name)
-
-                if not added_tools:
-                    return {"status": "error", "error": "未找到有效的工具定义"}
-
-                return {"status": "ok", "tools": added_tools}
-            except SyntaxError as e:
-                return {"status": "error", "error": f"语法错误: {e}"}
-            except Exception as e:
-                return {"status": "error", "error": f"执行失败: {e}"}
-
-        @self.app.post("/api/skills")
-        async def add_skill(request: Request):
-            """动态添加 Skill（保存 SKILL.md）"""
-            body = await request.json()
-            name = body.get("name", "").strip()
-            content = body.get("content", "").strip()
-
-            if not name or not content:
-                return {"status": "error", "error": "name and content are required"}
-
-            # 验证 name 格式
-            if not name.replace("-", "").replace("_", "").isalnum():
-                return {"status": "error", "error": "Skill 名称只能包含字母、数字、下划线和连字符"}
-            if len(name) > 50:
-                return {"status": "error", "error": "Skill 名称不能超过 50 字符"}
-
-            # 验证 content 结构
-            if not content.startswith("#"):
-                return {"status": "error", "error": "Skill 内容必须以 Markdown 标题开头（# 标题）"}
-            if len(content) < 20:
-                return {"status": "error", "error": "Skill 内容过短，至少需要 20 字符"}
-
-            try:
-                from pathlib import Path
-                from jay_agent_core.skills import Skill
-
-                # Save to .claude/skills/
-                skills_dir = Path.cwd() / ".claude" / "skills" / name
-                skills_dir.mkdir(parents=True, exist_ok=True)
-                skill_file = skills_dir / "SKILL.md"
-                skill_file.write_text(content, encoding="utf-8")
-
-                # Load skill
-                skill = Skill(name=name, path=skill_file, content=content)
-
-                # 验证 skill 解析成功
-                if not skill.title:
-                    return {"status": "error", "error": "无法解析 Skill 标题"}
-
-                # Add to agent's skill manager
-                core_agent = self.agent.agent if hasattr(self.agent, 'agent') else self.agent
-                if hasattr(core_agent, 'skill_manager'):
-                    core_agent.skill_manager.skills[name] = skill
-
-                return {"status": "ok", "skill": name, "path": str(skill_file)}
-            except Exception as e:
-                return {"status": "error", "error": f"保存失败: {e}"}
-
-        @self.app.websocket("/ws")
-        async def websocket_endpoint(websocket: WebSocket):
-            """WebSocket endpoint for real-time chat."""
-            await websocket.accept()
-
-            try:
-                while True:
-                    # Receive message
-                    data = await websocket.receive_json()
-                    message = data.get("message", "")
-
-                    if not message:
-                        continue
-
-                    # Add to history
-                    self.history.append(ChatMessage(role="user", content=message))
-
-                    # Send acknowledgment
-                    await websocket.send_json({"type": "received"})
-
-                    # Get response
-                    if self.agent:
-                        if hasattr(self.agent, 'agent') and hasattr(self.agent.agent, 'arun'):
-                            response = await self.agent.agent.arun(message)
-                        elif hasattr(self.agent, 'arun'):
-                            response = await self.agent.arun(message)
-                        else:
-                            response = self.agent.run(message)
-                        content = response.content
-                    elif self.llm:
-                        # Check if streaming
-                        if hasattr(self.llm, "stream"):
-                            # Stream via WebSocket
-                            full_content = ""
-                            for chunk in self.llm.stream(message):
-                                await websocket.send_json(
-                                    {
-                                        "type": "token",
-                                        "content": chunk.content,
-                                    }
-                                )
-                                full_content += chunk.content
-                            content = full_content
-                        else:
-                            response = self.llm.complete(message)
-                            content = response.content
-                            await websocket.send_json(
-                                {
-                                    "type": "token",
-                                    "content": content,
-                                }
-                            )
-                    else:
-                        content = "No LLM configured"
-                        await websocket.send_json(
-                            {
-                                "type": "token",
-                                "content": content,
-                            }
-                        )
-
-                    # Add to history
-                    if content:
-                        self.history.append(ChatMessage(role="assistant", content=content))
-
-                    # Send done
-                    await websocket.send_json({"type": "done"})
-
-            except WebSocketDisconnect:
-                pass
-            except Exception as e:
-                await websocket.send_json({"type": "error", "error": str(e)})
-
-    async def _stream_response(self, message: str) -> AsyncIterator[str]:
+    async def _stream_response(self, message: str, attachments: list | None = None) -> AsyncIterator[str]:
         """Stream response as SSE."""
         self.history.append(ChatMessage(role="user", content=message))
+        self._record_to_session("user", message)
+
+        workspace = Path.cwd()
+        if self.agent and hasattr(self.agent, "workspace"):
+            workspace = Path(self.agent.workspace)
+
+        agent_content: str | list = message
+        if attachments:
+            image_blocks, text_content = process_attachments(attachments, workspace)
+            agent_content = build_multimodal_content(message, image_blocks, text_content)
+
+        # Vision model fallback
+        vision_used = False
+        if isinstance(agent_content, list) and self.vision_model:
+            llm = self._resolve_llm()
+            current_model = getattr(getattr(llm, "config", None), "model", None)
+            if current_model and self.vision_model != current_model:
+                vision_used = True
 
         self._cancel_event = asyncio.Event()
 
         try:
             yield self._format_sse(StreamChunk(type="start"))
+
+            if vision_used:
+                img_count = sum(1 for b in agent_content if b.get("type") == "image_url")
+                yield self._format_sse(StreamChunk(
+                    type="status",
+                    status=f"⚙ 调用视觉模型 {self.vision_model} 处理 {img_count} 张图片...",
+                ))
+                content = await self._vision_fallback(agent_content, message)
+                yield self._format_sse(StreamChunk(type="token", content=content))
+                self.history.append(ChatMessage(role="assistant", content=content))
+                self._record_to_session("assistant", content)
+                yield self._format_sse(StreamChunk(type="done"))
+                return
+
             yield self._format_sse(StreamChunk(type="status", status="正在思考..."))
 
             if self.agent:
                 content = ""
-                core_agent = self.agent.agent if hasattr(self.agent, 'agent') else self.agent
+                core_agent = self.agent.agent if hasattr(self.agent, "agent") else self.agent
 
-                # Use asyncio.Queue to receive tool events from arun()
                 status_queue: asyncio.Queue = asyncio.Queue()
 
-                _TOOL_LABELS = {
-                    "run_command": "执行命令",
-                    "search_web": "搜索网络",
-                    "read_webpage": "读取网页",
-                    "read_file": "读取文件",
-                    "write_file": "写入文件",
-                    "list_files": "列出文件",
-                    "grep_files": "搜索文件内容",
-                    "find_files": "查找文件",
-                    "generate_code": "生成代码",
-                    "explain_code": "分析代码",
-                    "think": "深度思考",
-                    "plan": "制定计划",
-                    "git_status": "查看 Git 状态",
-                    "git_diff": "查看代码差异",
-                    "git_commit": "提交代码",
-                    "search_zhihu": "搜索知乎",
-                    "translate_to_english": "翻译内容",
-                    "discover_tools": "加载工具",
-                    "get_current_time": "获取时间",
-                }
+                # Display labels are now derived from each tool's schema
+                # description (first clause), with optional curated overrides
+                # in ``jay_web_ui.tool_labels._OVERRIDES``. New tools that
+                # register through registry_enhanced show up automatically.
+                from .tool_labels import build_tool_label_map, resolve_label
+
+                tool_labels: dict[str, str] = {}
+                try:
+                    if hasattr(core_agent, "registry_enhanced"):
+                        tool_labels = build_tool_label_map(
+                            core_agent.registry_enhanced.get_schemas()
+                        )
+                except Exception:
+                    logger.exception("tool-label map build failed; falling back to raw names")
 
                 def on_tool_start(tool_name, tool_args):
-                    label = _TOOL_LABELS.get(tool_name, f"调用 {tool_name}")
+                    label = resolve_label(tool_labels, tool_name) or f"调用 {tool_name}"
                     status_queue.put_nowait(f"⚙ {label}...")
 
                 def on_tool_end(tool_name, result):
-                    label = _TOOL_LABELS.get(tool_name, tool_name)
+                    label = resolve_label(tool_labels, tool_name)
                     status_queue.put_nowait(f"✓ {label} 完成")
 
                 orig_start = core_agent.on_tool_start
@@ -606,8 +379,7 @@ class ChatServer:
 
                 yield self._format_sse(StreamChunk(type="status", status="正在分析请求..."))
 
-                # Run arun() as a background task so we can yield status events concurrently
-                self._active_task = asyncio.create_task(core_agent.arun(message))
+                self._active_task = asyncio.create_task(core_agent.arun(agent_content))
 
                 try:
                     cancelled = False
@@ -616,7 +388,6 @@ class ChatServer:
                             self._active_task.cancel()
                             cancelled = True
                             break
-                        # Drain status queue
                         while not status_queue.empty():
                             status = status_queue.get_nowait()
                             yield self._format_sse(StreamChunk(type="status", status=status))
@@ -627,7 +398,6 @@ class ChatServer:
                         yield self._format_sse(StreamChunk(type="done"))
                         return
 
-                    # Drain any remaining status events
                     while not status_queue.empty():
                         status = status_queue.get_nowait()
                         yield self._format_sse(StreamChunk(type="status", status=status))
@@ -662,6 +432,7 @@ class ChatServer:
 
             if content:
                 self.history.append(ChatMessage(role="assistant", content=content))
+                self._record_to_session("assistant", content)
 
             yield self._format_sse(StreamChunk(type="done"))
 
@@ -675,22 +446,11 @@ class ChatServer:
             self._active_task = None
 
     def _format_sse(self, chunk: StreamChunk) -> str:
-        """Format chunk as SSE.
-
-        Args:
-            chunk: Stream chunk
-
-        Returns:
-            SSE formatted string
-        """
+        """Format chunk as SSE."""
         return f"data: {chunk.model_dump_json()}\n\n"
 
     def run(self, **kwargs):
-        """Run the server.
-
-        Args:
-            **kwargs: Arguments for uvicorn.run
-        """
+        """Run the server."""
         import uvicorn
 
         uvicorn.run(

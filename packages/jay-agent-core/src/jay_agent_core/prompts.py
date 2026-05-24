@@ -67,8 +67,8 @@ class PromptManager:
             directories: List of directories to search
 
         Looks for .md files in:
-        - ~/.agents/prompts/
-        - .agents/prompts/
+        - ~/.jayclaw/prompts/
+        - .jayclaw/prompts/
         - .pi/prompts/
         - Any provided directories
         """
@@ -76,14 +76,14 @@ class PromptManager:
 
         # Add standard paths
         home = Path.home()
-        if (home / ".agents" / "prompts").exists():
-            search_paths.append(home / ".agents" / "prompts")
+        if (home / ".jayclaw" / "prompts").exists():
+            search_paths.append(home / ".jayclaw" / "prompts")
         if (home / ".pi" / "agent" / "prompts").exists():
             search_paths.append(home / ".pi" / "agent" / "prompts")
 
         cwd = Path.cwd()
-        if (cwd / ".agents" / "prompts").exists():
-            search_paths.append(cwd / ".agents" / "prompts")
+        if (cwd / ".jayclaw" / "prompts").exists():
+            search_paths.append(cwd / ".jayclaw" / "prompts")
         if (cwd / ".pi" / "prompts").exists():
             search_paths.append(cwd / ".pi" / "prompts")
 

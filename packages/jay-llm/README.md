@@ -12,6 +12,7 @@ Unified multi-provider LLM API for Python.
 - 🔄 **Streaming support**: Real-time token streaming
 - 🛡️ **Error handling**: Automatic retries and fallbacks
 - 📊 **Usage tracking**: Token counting and cost estimation
+- 🧠 **Context window detection**: Auto-detect model context limits (5-level resolution chain)
 
 ## Installation
 
@@ -76,6 +77,25 @@ config = Config(
 )
 
 llm = LLM(config=config)
+```
+
+## Context Window Detection
+
+Automatically detect the context window size for any model:
+
+```python
+from jay_llm import detect_context_window
+
+# Returns token limit for the model (e.g., 128000 for gpt-4o)
+window = detect_context_window("gpt-4o", "openai")
+
+# 5-level resolution: env var → litellm → family prefix table → provider default → 8192
+window = detect_context_window("claude-3-5-sonnet-20241022", "anthropic")  # 200000
+```
+
+Override via environment variable:
+```bash
+export LLM_CONTEXT_WINDOW=32768
 ```
 
 ## Provider-Specific Examples

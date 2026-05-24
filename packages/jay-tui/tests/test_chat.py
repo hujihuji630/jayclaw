@@ -6,7 +6,7 @@ from jay_tui.chat import ChatUI
 from jay_tui.theme import Theme
 
 
-@patch("pig_tui.chat.Console")
+@patch("jay_tui.chat.Console")
 def test_chat_ui_creation(mock_console):
     """Test creating chat UI."""
     chat = ChatUI(title="Test Chat")
@@ -15,7 +15,7 @@ def test_chat_ui_creation(mock_console):
     assert chat.markdown_mode is True
 
 
-@patch("pig_tui.chat.Console")
+@patch("jay_tui.chat.Console")
 def test_chat_ui_with_theme(mock_console):
     """Test chat UI with custom theme."""
     theme = Theme(user_color="blue")
@@ -23,7 +23,7 @@ def test_chat_ui_with_theme(mock_console):
     assert chat.theme.user_color == "blue"
 
 
-@patch("pig_tui.chat.Console")
+@patch("jay_tui.chat.Console")
 def test_chat_ui_user_message(mock_console):
     """Test displaying user message."""
     chat = ChatUI()
@@ -33,7 +33,7 @@ def test_chat_ui_user_message(mock_console):
     chat.console.print.assert_called()
 
 
-@patch("pig_tui.chat.Console")
+@patch("jay_tui.chat.Console")
 def test_chat_ui_assistant_message(mock_console):
     """Test displaying assistant message."""
     chat = ChatUI()
@@ -42,7 +42,7 @@ def test_chat_ui_assistant_message(mock_console):
     chat.console.print.assert_called()
 
 
-@patch("pig_tui.chat.Console")
+@patch("jay_tui.chat.Console")
 def test_chat_ui_system_message(mock_console):
     """Test displaying system message."""
     chat = ChatUI()
@@ -51,7 +51,7 @@ def test_chat_ui_system_message(mock_console):
     chat.console.print.assert_called()
 
 
-@patch("pig_tui.chat.Console")
+@patch("jay_tui.chat.Console")
 def test_chat_ui_error_message(mock_console):
     """Test displaying error message."""
     chat = ChatUI()
@@ -60,7 +60,7 @@ def test_chat_ui_error_message(mock_console):
     chat.console.print.assert_called()
 
 
-@patch("pig_tui.chat.Console")
+@patch("jay_tui.chat.Console")
 def test_chat_ui_with_timestamps(mock_console):
     """Test chat with timestamps."""
     chat = ChatUI(show_timestamps=True)
@@ -71,7 +71,7 @@ def test_chat_ui_with_timestamps(mock_console):
     chat.console.print.assert_called()
 
 
-@patch("pig_tui.chat.Console")
+@patch("jay_tui.chat.Console")
 def test_chat_ui_separator(mock_console):
     """Test separator."""
     chat = ChatUI()
@@ -80,7 +80,7 @@ def test_chat_ui_separator(mock_console):
     chat.console.rule.assert_called_once()
 
 
-@patch("pig_tui.chat.Console")
+@patch("jay_tui.chat.Console")
 def test_chat_ui_clear(mock_console):
     """Test clearing chat."""
     chat = ChatUI()

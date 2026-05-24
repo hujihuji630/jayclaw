@@ -5,8 +5,14 @@ from pathlib import Path  # noqa: E402
 
 from .base import CancelledError, ToolResult
 from .handlers_core import HANDLERS
+from .handlers_delegate import HANDLERS as _DELEGATE_HANDLERS
+from .handlers_scratchpad import HANDLERS as _SCRATCHPAD_HANDLERS
 from .registry import ToolRegistry
 from .schemas import CORE_TOOL_NAMES, TOOL_BUDGETS, TOOL_PERMISSIONS, TOOL_SCHEMAS
+
+# Merge all handlers into a single dict
+HANDLERS.update(_SCRATCHPAD_HANDLERS)
+HANDLERS.update(_DELEGATE_HANDLERS)
 
 # Global registry for external tool registration
 # External packages can import this and register their tools

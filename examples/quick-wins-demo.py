@@ -41,7 +41,7 @@ Always:
     # 2. Setup Prompt Templates
     print("\n2. Setting up prompt templates...")
 
-    prompts_dir = workspace / ".agents" / "prompts"
+    prompts_dir = workspace / ".jayclaw" / "prompts"
     prompts_dir.mkdir(parents=True)
 
     (prompts_dir / "api-route.md").write_text("""# Create API Route

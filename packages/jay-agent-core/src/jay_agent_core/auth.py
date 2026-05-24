@@ -186,10 +186,10 @@ class AuthManager:
         """Initialize auth manager.
 
         Args:
-            storage_path: Path to store tokens (default: ~/.agents/auth.json)
+            storage_path: Path to store tokens (default: ~/.jayclaw/auth.json)
         """
         if storage_path is None:
-            storage_path = Path.home() / ".agents" / "auth.json"
+            storage_path = Path.home() / ".jayclaw" / "auth.json"
 
         self.storage_path = storage_path
         self.tokens: dict[str, TokenInfo] = {}

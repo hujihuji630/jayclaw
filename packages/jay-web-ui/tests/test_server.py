@@ -43,17 +43,20 @@ def test_server_creation_with_cors(mock_llm):
     assert any(m.cls.__name__ == "CORSMiddleware" for m in server.app.user_middleware)
 
 
+_HOST_HEADERS = {"Host": "127.0.0.1:8000"}
+
+
 def test_server_routes(mock_llm):
     """Test server has required routes."""
     server = ChatServer(llm=mock_llm)
     client = TestClient(server.app)
 
-    # Test home page
-    response = client.get("/")
+    # Test home page (Host header required: anti-DNS-rebinding middleware)
+    response = client.get("/", headers=_HOST_HEADERS)
     assert response.status_code == 200
 
     # Test history endpoint
-    response = client.get("/api/history")
+    response = client.get("/api/history", headers=_HOST_HEADERS)
     assert response.status_code == 200
     assert "messages" in response.json()
 
@@ -68,7 +71,7 @@ def test_server_clear_history(mock_llm):
     assert len(server.history) > 0
 
     # Clear history
-    response = client.delete("/api/history")
+    response = client.delete("/api/history", headers=_HOST_HEADERS)
     assert response.status_code == 200
     assert len(server.history) == 0
 

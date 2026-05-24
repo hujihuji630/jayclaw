@@ -17,7 +17,7 @@ def test_console_custom_theme():
     assert console.theme == "solarized"
 
 
-@patch("pig_tui.console.RichConsole")
+@patch("jay_tui.console.RichConsole")
 def test_console_print(mock_rich_console):
     """Test console print."""
     console = Console()
@@ -27,7 +27,7 @@ def test_console_print(mock_rich_console):
     console.console.print.assert_called_once()
 
 
-@patch("pig_tui.console.RichConsole")
+@patch("jay_tui.console.RichConsole")
 def test_console_markdown(mock_rich_console):
     """Test markdown rendering."""
     console = Console()
@@ -36,7 +36,7 @@ def test_console_markdown(mock_rich_console):
     console.console.print.assert_called_once()
 
 
-@patch("pig_tui.console.RichConsole")
+@patch("jay_tui.console.RichConsole")
 def test_console_code(mock_rich_console):
     """Test code highlighting."""
     console = Console()
@@ -45,7 +45,7 @@ def test_console_code(mock_rich_console):
     console.console.print.assert_called_once()
 
 
-@patch("pig_tui.console.RichConsole")
+@patch("jay_tui.console.RichConsole")
 def test_console_json(mock_rich_console):
     """Test JSON printing."""
     console = Console()
@@ -54,7 +54,7 @@ def test_console_json(mock_rich_console):
     console.console.print.assert_called_once()
 
 
-@patch("pig_tui.console.RichConsole")
+@patch("jay_tui.console.RichConsole")
 def test_console_rule(mock_rich_console):
     """Test rule printing."""
     console = Console()
@@ -63,7 +63,7 @@ def test_console_rule(mock_rich_console):
     console.console.rule.assert_called_once()
 
 
-@patch("pig_tui.console.RichConsole")
+@patch("jay_tui.console.RichConsole")
 def test_console_clear(mock_rich_console):
     """Test clearing console."""
     console = Console()

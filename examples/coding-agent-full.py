@@ -12,7 +12,7 @@ def setup_demo_environment():
     workspace.mkdir(exist_ok=True)
 
     # Create sample extension
-    ext_dir = workspace / ".agents" / "extensions"
+    ext_dir = workspace / ".jayclaw" / "extensions"
     ext_dir.mkdir(parents=True, exist_ok=True)
 
     (ext_dir / "demo_extension.py").write_text("""
@@ -35,7 +35,7 @@ def extension(api):
 """)
 
     # Create sample skill
-    skill_dir = workspace / ".agents" / "skills" / "python-best-practices"
+    skill_dir = workspace / ".jayclaw" / "skills" / "python-best-practices"
     skill_dir.mkdir(parents=True, exist_ok=True)
 
     (skill_dir / "SKILL.md").write_text("""# Python Best Practices

@@ -1,0 +1,33 @@
+# Normalize line endings on commit so Windows + Unix devs share one source of truth.
+* text=auto eol=lf
+
+# Force LF for code / config / docs that CI parses
+*.py     text eol=lf
+*.pyi    text eol=lf
+*.js     text eol=lf
+*.ts     text eol=lf
+*.css    text eol=lf
+*.html   text eol=lf
+*.json   text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.toml   text eol=lf
+*.md     text eol=lf
+*.sh     text eol=lf
+*.cfg    text eol=lf
+*.ini    text eol=lf
+
+# Windows-only scripts keep CRLF
+*.bat    text eol=crlf
+*.ps1    text eol=crlf
+
+# Treat binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.pdf    binary
+*.ico    binary
+*.woff   binary
+*.woff2  binary

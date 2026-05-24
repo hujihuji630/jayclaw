@@ -33,18 +33,26 @@ class OpenAIProvider(Provider):
         result = []
         for msg in messages:
             if msg.role == "assistant" and msg.metadata and "tool_calls" in msg.metadata:
+                content = msg.content or None
+                if isinstance(content, list):
+                    pass  # list content blocks are valid for OpenAI
                 result.append(
                     {
                         "role": "assistant",
-                        "content": msg.content or None,
+                        "content": content,
                         "tool_calls": msg.metadata["tool_calls"],
                     }
                 )
             elif msg.role == "tool" and msg.metadata:
+                content = msg.content
+                if isinstance(content, list):
+                    content = "\n".join(
+                        b.get("text", "") for b in content if b.get("type") == "text"
+                    )
                 result.append(
                     {
                         "role": "tool",
-                        "content": msg.content,
+                        "content": content,
                         "tool_call_id": msg.metadata.get("tool_call_id", ""),
                     }
                 )

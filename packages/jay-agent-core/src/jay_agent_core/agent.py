@@ -180,20 +180,20 @@ class Agent:
         except RuntimeError:
             return asyncio.run(self.arun(message, check_queue))
 
-    async def arun(self, message: str, check_queue: bool = True) -> Response:
+    async def arun(self, message: str | list, check_queue: bool = True) -> Response:
         """Async run agent with a user message using enhanced subsystems.
 
         Uses resilient_streaming_call for LLM calls with retry and fallback.
         Supports context compression, billing tracking, and event emission.
 
         Args:
-            message: User message
+            message: User message (str for text, list for multimodal content blocks)
             check_queue: Check message queue for interrupts
 
         Returns:
             Agent response
         """
-        self._log(f"User: {message}")
+        self._log(f"User: {message if isinstance(message, str) else '[multimodal]'}")
         self.history.append(Message(role="user", content=message))
 
         iterations = 0
@@ -500,70 +500,3 @@ class Agent:
             if cancel and cancel.is_set():
                 return
             yield char
-
-    async def _execute_tool_calls_from_dict(
-        self,
-        tool_calls: list[dict[str, Any]],
-        cancel: asyncio.Event | None = None,
-    ) -> None:
-        """Execute tool calls from dictionary format.
-
-        Args:
-            tool_calls: List of tool call dictionaries
-            cancel: Optional cancellation event
-        """
-        for tool_call in tool_calls:
-            if cancel and cancel.is_set():
-                return
-
-            tool_name = tool_call.get("function", {}).get("name")
-            tool_args_str = tool_call.get("function", {}).get("arguments", "{}")
-            tool_call_id = tool_call.get("id")
-
-            try:
-                tool_args = json.loads(tool_args_str)
-            except json.JSONDecodeError:
-                tool_args = {}
-
-            self._log(f"[cyan]→ Calling tool: {tool_name}({tool_args})[/cyan]")
-
-            if self.on_tool_start:
-                self.on_tool_start(tool_name, tool_args)
-
-            try:
-                result = self.registry.execute(tool_name, **tool_args)
-                self.history.append(
-                    Message(
-                        role="tool",
-                        content=str(result),
-                        metadata={
-                            "tool_call_id": tool_call_id,
-                            "name": tool_name,
-                        },
-                    )
-                )
-                self._log(f"[green]✓ Result: {result}[/green]")
-
-                if self.on_tool_end:
-                    self.on_tool_end(tool_name, result)
-            except Exception as e:
-                error_msg = f"Error: {e}"
-                self.history.append(
-                    Message(
-                        role="tool",
-                        content=error_msg,
-                        metadata={
-                            "tool_call_id": tool_call_id,
-                            "name": tool_name,
-                        },
-                    )
-                )
-                self._log(f"[red]✗ {error_msg}[/red]")
-
-    async def _execute_tool_calls(self, tool_calls: list[dict[str, Any]]) -> None:
-        """Execute tool calls (backward compatibility wrapper).
-
-        Args:
-            tool_calls: List of tool call dictionaries
-        """
-        await self._execute_tool_calls_from_dict(tool_calls, None)

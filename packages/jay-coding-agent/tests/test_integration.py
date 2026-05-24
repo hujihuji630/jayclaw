@@ -62,7 +62,7 @@ def test_coding_agent_load_existing_session(mock_llm, temp_workspace):
 def test_coding_agent_with_extensions(mock_llm, temp_workspace):
     """Test coding agent with extensions."""
     # Create extension
-    ext_dir = temp_workspace / ".agents" / "extensions"
+    ext_dir = temp_workspace / ".jayclaw" / "extensions"
     ext_dir.mkdir(parents=True)
 
     ext_file = ext_dir / "test_ext.py"
@@ -92,7 +92,7 @@ def extension(api):
 def test_coding_agent_with_skills(mock_llm, temp_workspace):
     """Test coding agent with skills."""
     # Create skill
-    skill_dir = temp_workspace / ".agents" / "skills" / "test-skill"
+    skill_dir = temp_workspace / ".jayclaw" / "skills" / "test-skill"
     skill_dir.mkdir(parents=True)
 
     skill_file = skill_dir / "SKILL.md"
@@ -113,7 +113,7 @@ This is a test skill.
     )
 
     # Manually discover skills in the temp workspace
-    agent.skill_manager.discover_skills([temp_workspace / ".agents" / "skills"])
+    agent.skill_manager.discover_skills([temp_workspace / ".jayclaw" / "skills"])
 
     # Skill should be loaded
     assert agent.skill_manager is not None
@@ -231,7 +231,7 @@ def test_extensions_command(mock_llm, temp_workspace):
 def test_skill_invocation(mock_llm, temp_workspace):
     """Test invoking a skill."""
     # Create skill
-    skill_dir = temp_workspace / ".agents" / "skills" / "my-skill"
+    skill_dir = temp_workspace / ".jayclaw" / "skills" / "my-skill"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text("# My Skill\nDescription\n## Steps\n1. Step")
 
@@ -242,7 +242,7 @@ def test_skill_invocation(mock_llm, temp_workspace):
         verbose=False,
     )
     agent.ui = Mock()
-    agent.skill_manager.discover_skills([temp_workspace / ".agents" / "skills"])
+    agent.skill_manager.discover_skills([temp_workspace / ".jayclaw" / "skills"])
 
     agent._handle_command("/skill:my-skill")
 

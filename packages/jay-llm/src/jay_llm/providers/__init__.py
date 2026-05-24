@@ -8,7 +8,7 @@ from ._base import Provider
 
 def _try_import(name, module, attr):
     try:
-        mod = __import__(f"pig_llm.providers.{module}", fromlist=[attr])
+        mod = __import__(f"jay_llm.providers.{module}", fromlist=[attr])
         return getattr(mod, attr)
     except (ImportError, ModuleNotFoundError):
         return None
@@ -28,6 +28,7 @@ CohereProvider = _try_import("cohere", "cohere", "CohereProvider")
 PerplexityProvider = _try_import("perplexity", "perplexity", "PerplexityProvider")
 DeepSeekProvider = _try_import("deepseek", "deepseek", "DeepSeekProvider")
 TogetherProvider = _try_import("together", "together", "TogetherProvider")
+GLMProvider = _try_import("glm", "glm", "GLMProvider")
 
 __all__ = [
     "Provider",
@@ -45,4 +46,5 @@ __all__ = [
     "PerplexityProvider",
     "DeepSeekProvider",
     "TogetherProvider",
+    "GLMProvider",
 ]

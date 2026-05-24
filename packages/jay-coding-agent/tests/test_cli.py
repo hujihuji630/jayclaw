@@ -40,8 +40,8 @@ def test_cli_imports():
     assert callable(analyze)
 
 
-@patch("pig_coding_agent.cli.LLM")
-@patch("pig_coding_agent.cli.CodingAgent")
+@patch("jay_coding_agent.cli.LLM")
+@patch("jay_coding_agent.cli.CodingAgent")
 def test_gen_command(mock_agent_class, mock_llm_class, mock_env, tmp_path):
     """Test gen command."""
     from jay_coding_agent.cli import gen
@@ -56,7 +56,7 @@ def test_gen_command(mock_agent_class, mock_llm_class, mock_env, tmp_path):
     mock_agent_class.return_value = mock_agent
 
     # Test without output file
-    with patch("pig_coding_agent.cli.console") as mock_console:
+    with patch("jay_coding_agent.cli.console") as mock_console:
         gen(description="Create a hello world script", output=None, model=None)
 
         mock_llm_class.assert_called_once()
@@ -65,8 +65,8 @@ def test_gen_command(mock_agent_class, mock_llm_class, mock_env, tmp_path):
         mock_console.print.assert_called()
 
 
-@patch("pig_coding_agent.cli.LLM")
-@patch("pig_coding_agent.cli.CodingAgent")
+@patch("jay_coding_agent.cli.LLM")
+@patch("jay_coding_agent.cli.CodingAgent")
 def test_gen_command_with_output(mock_agent_class, mock_llm_class, mock_env, tmp_path):
     """Test gen command with output file."""
     from jay_coding_agent.cli import gen
@@ -82,7 +82,7 @@ def test_gen_command_with_output(mock_agent_class, mock_llm_class, mock_env, tmp
     # Test with output file
     output_file = tmp_path / "output.py"
 
-    with patch("pig_coding_agent.cli.console") as mock_console:
+    with patch("jay_coding_agent.cli.console") as mock_console:
         gen(description="Create script", output=output_file, model=None)
 
         assert output_file.exists()
@@ -90,8 +90,8 @@ def test_gen_command_with_output(mock_agent_class, mock_llm_class, mock_env, tmp
         mock_console.print.assert_called()
 
 
-@patch("pig_coding_agent.cli.LLM")
-@patch("pig_coding_agent.cli.CodingAgent")
+@patch("jay_coding_agent.cli.LLM")
+@patch("jay_coding_agent.cli.CodingAgent")
 def test_analyze_command(mock_agent_class, mock_llm_class, mock_env, tmp_path):
     """Test analyze command."""
     from jay_coding_agent.cli import analyze
@@ -108,7 +108,7 @@ def test_analyze_command(mock_agent_class, mock_llm_class, mock_env, tmp_path):
     mock_agent.run_once = Mock(return_value="Analysis: Simple print statement")
     mock_agent_class.return_value = mock_agent
 
-    with patch("pig_coding_agent.cli.console") as mock_console:
+    with patch("jay_coding_agent.cli.console") as mock_console:
         analyze(path=test_file, model=None)
 
         mock_agent.run_once.assert_called_once()
@@ -120,7 +120,7 @@ def test_analyze_command_missing_file(mock_env):
     from jay_coding_agent.cli import analyze
 
     with pytest.raises((SystemExit, Exception)):
-        with patch("pig_coding_agent.cli.console"):
+        with patch("jay_coding_agent.cli.console"):
             analyze(path=Path("nonexistent.py"), model=None)
 
 
@@ -130,12 +130,12 @@ def test_main_without_api_key(mock_ctx):
 
     with patch.dict(os.environ, {}, clear=True):
         with pytest.raises((SystemExit, Exception)):
-            with patch("pig_coding_agent.cli.console"):
+            with patch("jay_coding_agent.cli.console"):
                 main(ctx=mock_ctx)
 
 
-@patch("pig_coding_agent.cli.LLM")
-@patch("pig_coding_agent.cli.CodingAgent")
+@patch("jay_coding_agent.cli.LLM")
+@patch("jay_coding_agent.cli.CodingAgent")
 def test_main_with_custom_model(mock_agent_class, mock_llm_class, mock_env, mock_ctx):
     """Test main with custom model."""
     from jay_coding_agent.cli import main
@@ -152,15 +152,15 @@ def test_main_with_custom_model(mock_agent_class, mock_llm_class, mock_env, mock
     mock_agent.extension_manager = None
     mock_agent_class.return_value = mock_agent
 
-    with patch("pig_coding_agent.cli.console"):
+    with patch("jay_coding_agent.cli.console"):
         main(ctx=mock_ctx, model="gpt-4", provider="openai", workspace=Path("."), verbose=True)
 
         # Verify LLM created with correct model
         assert mock_llm_class.call_args.kwargs.get("model") == "gpt-4"
 
 
-@patch("pig_coding_agent.cli.LLM")
-@patch("pig_coding_agent.cli.CodingAgent")
+@patch("jay_coding_agent.cli.LLM")
+@patch("jay_coding_agent.cli.CodingAgent")
 def test_main_with_workspace(mock_agent_class, mock_llm_class, mock_env, mock_ctx, tmp_path):
     """Test main with custom workspace."""
     from jay_coding_agent.cli import main
@@ -176,7 +176,7 @@ def test_main_with_workspace(mock_agent_class, mock_llm_class, mock_env, mock_ct
     mock_agent.extension_manager = None
     mock_agent_class.return_value = mock_agent
 
-    with patch("pig_coding_agent.cli.console"):
+    with patch("jay_coding_agent.cli.console"):
         main(ctx=mock_ctx, workspace=tmp_path, provider="openai")
 
         # Verify agent created with correct workspace

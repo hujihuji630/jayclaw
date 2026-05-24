@@ -1,7 +1,7 @@
 """Universal message format.
 
 DEPRECATED: This module is kept for backward compatibility.
-Use pig_messenger.base instead.
+Use jay_messenger.base instead.
 """
 
 import warnings
@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 warnings.warn(
-    "pig_messenger.message is deprecated. Use pig_messenger.base instead.",
+    "jay_messenger.message is deprecated. Use jay_messenger.base instead.",
     DeprecationWarning,
     stacklevel=2,
 )

@@ -9,7 +9,7 @@ from jay_messenger.base import MessengerType
 @pytest.fixture
 def adapter():
     """Create Feishu compat adapter."""
-    with patch("pig_messenger.adapters.feishu_compat.FeishuAdapter"):
+    with patch("jay_messenger.adapters.feishu_compat.FeishuAdapter"):
         from jay_messenger.adapters.feishu_compat import FeishuMessengerAdapter
 
         adapter = FeishuMessengerAdapter(

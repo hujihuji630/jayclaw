@@ -77,14 +77,6 @@
                 </button>
             </nav>
 
-            <!-- Control Section -->
-            <div class="control-section">
-                <div class="section-label">控制</div>
-                <button class="nav-item" id="sessionsBtn">
-                    <span class="nav-icon">◈</span>
-                    <span class="nav-text">Sessions</span>
-                </button>
-            </div>
 
             <!-- Workspace Section -->
             <div class="workspace-section">
@@ -100,6 +92,10 @@
                 <button class="nav-item" id="toolsBtn">
                     <span class="nav-icon">◭</span>
                     <span class="nav-text">Tools</span>
+                </button>
+                <button class="nav-item" id="mcpBtn">
+                    <span class="nav-icon">⬡</span>
+                    <span class="nav-text">MCP</span>
                 </button>
             </div>
 
@@ -126,6 +122,20 @@
             <header class="top-bar">
                 <h2 class="chat-title">New Chat</h2>
                 <div class="top-bar-actions">
+                    <div class="context-meter" id="contextMeter" style="display:none">
+                        <span class="ctx-label">0%</span>
+                        <div class="ctx-bar">
+                            <div class="ctx-bar-fill" data-zone="smart"></div>
+                        </div>
+                    </div>
+                    <button class="compact-btn" id="compactBtn" title="压缩上下文">
+                        <span>⊘</span>
+                        <span>Compact</span>
+                    </button>
+                    <button class="handoff-btn" id="handoffBtn" title="生成 Handoff 文档">
+                        <span>⇥</span>
+                        <span>Handoff</span>
+                    </button>
                     <div class="model-selector">
                         <span class="model-icon">⬢</span>
                         <span class="model-name" id="currentModel">{{ model }}</span>
@@ -133,9 +143,6 @@
                     </div>
                     <button class="icon-btn" id="newChatBtn" title="新建对话">
                         <span>✦</span>
-                    </button>
-                    <button class="icon-btn" id="searchBtn" title="搜索">
-                        <span>◎</span>
                     </button>
                     <button class="icon-btn" id="historyBtn" title="历史记录">
                         <span>◷</span>
@@ -181,10 +188,8 @@
             <!-- Input Area -->
             <div class="input-area">
                 <div class="input-container">
+                    <div class="attachment-row" id="attachmentRow"></div>
                     <div class="input-wrapper">
-                        <button class="input-icon-btn" id="voiceBtn" title="语音输入">
-                            <span>◉</span>
-                        </button>
                         <button class="input-icon-btn" id="attachBtn" title="附加文件">
                             <span>◈</span>
                         </button>
@@ -211,6 +216,95 @@
                 </div>
             </div>
         </main>
+    </div>
+
+    <!-- Fork 弹窗 -->
+    <div class="fork-modal-overlay" id="forkModal" style="display:none">
+        <div class="fork-modal">
+            <div class="fork-modal-title">Fork 会话</div>
+            <div class="fork-option" data-mode="code_only">
+                <span class="fork-option-icon">⎇</span>
+                <span class="fork-option-label">仅代码回退</span>
+                <span class="fork-option-desc">创建 Git 分支，会话保持不变</span>
+            </div>
+            <div class="fork-option" data-mode="session_only">
+                <span class="fork-option-icon">◫</span>
+                <span class="fork-option-label">仅会话回退</span>
+                <span class="fork-option-desc">Fork 会话记录，代码保持不变</span>
+            </div>
+            <div class="fork-option" data-mode="both">
+                <span class="fork-option-icon">⊞</span>
+                <span class="fork-option-label">代码与会话均回退</span>
+                <span class="fork-option-desc">同时创建 Git 分支并 Fork 会话</span>
+            </div>
+            <button class="fork-modal-cancel" id="forkCancel">取消</button>
+        </div>
+    </div>
+
+    <!-- AGENTS.md 初始化弹窗 -->
+    <div class="agents-modal-overlay" id="agentsInitModal" style="display:none">
+        <div class="agents-modal">
+            <div class="agents-modal-title">为这个工作目录创建 AGENTS.md？</div>
+            <div class="agents-modal-desc">
+                AGENTS.md 是这个目录的「记忆」：项目结构、硬约束、历史教训。每次启动会自动注入到 Agent 的 system prompt，让 Agent 一开始就懂这个项目。
+            </div>
+            <div class="agents-option" data-action="generate">
+                <div class="agents-option-icon">🪄</div>
+                <div class="agents-option-body">
+                    <div class="agents-option-label">现在为我生成</div>
+                    <div class="agents-option-desc">Agent 扫描目录结构 + 调用一次 LLM 起草，约 5–15 秒。可随时取消。</div>
+                </div>
+            </div>
+            <div class="agents-option" data-action="skip">
+                <div class="agents-option-icon">⏭</div>
+                <div class="agents-option-body">
+                    <div class="agents-option-label">本次跳过</div>
+                    <div class="agents-option-desc">这次不生成。下次启动 Web UI 时会再次询问。</div>
+                </div>
+            </div>
+            <div class="agents-option" data-action="never">
+                <div class="agents-option-icon">🔕</div>
+                <div class="agents-option-body">
+                    <div class="agents-option-label">永远不为此目录生成</div>
+                    <div class="agents-option-desc">写入标记文件 <code>.jayclaw/.no-agents-md</code>，今后不再询问。可手动删除该文件以恢复。</div>
+                </div>
+            </div>
+            <div class="agents-modal-status" id="agentsInitStatus"></div>
+            <div class="agents-modal-actions">
+                <button class="agents-modal-cancel" id="agentsInitCancel" style="display:none">取消生成</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- AGENTS.md 总结弹窗 -->
+    <div class="agents-modal-overlay" id="agentsSummaryModal" style="display:none">
+        <div class="agents-modal agents-modal--wide">
+            <div class="agents-modal-title">将本次会话写入 AGENTS.md？</div>
+            <div class="agents-modal-desc">
+                即将开新对话——是否先把刚才这段对话里出现的「教训」和「约束」追加到 AGENTS.md？Agent 会先读完整对话用一次 LLM 提取，写盘前会让你二次确认 diff。
+            </div>
+            <div class="agents-summary-status" id="agentsSummaryStatus">点击「分析对话」开始</div>
+            <div class="agents-summary-preview" id="agentsSummaryPreview" style="display:none">
+                <div class="agents-summary-section">
+                    <div class="agents-summary-heading">📌 新增约束 <span class="agents-summary-count" id="agentsSummaryConstraintsCount">0</span></div>
+                    <ul class="agents-summary-list" id="agentsSummaryConstraintsList"></ul>
+                </div>
+                <div class="agents-summary-section">
+                    <div class="agents-summary-heading">⚠ 新增教训 <span class="agents-summary-count" id="agentsSummaryPitfallsCount">0</span></div>
+                    <ul class="agents-summary-list" id="agentsSummaryPitfallsList"></ul>
+                </div>
+                <div class="agents-summary-section">
+                    <div class="agents-summary-heading">📝 完整 diff</div>
+                    <pre class="agents-summary-diff" id="agentsSummaryDiff"></pre>
+                </div>
+            </div>
+            <div class="agents-modal-actions">
+                <button class="agents-modal-cancel" id="agentsSummaryCancel">取消生成</button>
+                <button class="agents-modal-secondary" id="agentsSummarySkip">跳过，直接开新对话</button>
+                <button class="agents-modal-btn" id="agentsSummaryAnalyze">分析对话</button>
+                <button class="agents-modal-btn" id="agentsSummaryWrite" style="display:none">确认写入</button>
+            </div>
+        </div>
     </div>
 
     <script src="/static/app.js"></script>

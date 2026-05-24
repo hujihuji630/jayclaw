@@ -154,7 +154,7 @@ def test_skill_manager_contains(sample_skill_file):
 def test_skill_manager_discover_skills(tmp_path):
     """Test discovering skills."""
     # Create skills directory
-    skills_dir = tmp_path / ".agents" / "skills"
+    skills_dir = tmp_path / ".jayclaw" / "skills"
     skills_dir.mkdir(parents=True)
 
     # Create sample skills

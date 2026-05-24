@@ -72,8 +72,8 @@ class ConfigManager:
         self.workspace = Path(workspace) if workspace else Path.cwd()
 
         # Config file paths
-        self.global_config = Path.home() / ".agents" / "config.json"
-        self.project_config = self.workspace / ".agents" / "config.json"
+        self.global_config = Path.home() / ".jayclaw" / "config.json"
+        self.project_config = self.workspace / ".jayclaw" / "config.json"
 
     def load_config(self) -> AgentConfig:
         """Load configuration.

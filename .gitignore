@@ -62,6 +62,28 @@ htmlcov/
 # Claude Code
 .claude/
 
+# Jayclaw runtime data
+.jayclaw/
+
 # Session data
 .sessions/
 .messenger/.sessions/
+
+# Examples should stay free of personal demo state — these are common leftovers
+examples/.sessions/
+examples/.agents/
+examples/.jayclaw/
+examples/workspace/.sessions/
+examples/workspace/.agents/
+examples/workspace/.jayclaw/
+examples/.uploads/
+examples/HANDOFFS/
+examples/AGENTS.md.local
+examples/extract_*.py
+examples/ocr_*.py
+
+# Generated handoff documents (LLM-generated artifacts, not source)
+HANDOFFS/
+
+# Uploaded attachments — keep workspace dirs but never commit user content
+.uploads/

@@ -189,7 +189,7 @@ def run_json_mode(agent):
                 json_out.error(f"Error: {e}")
     else:
         # Interactive JSON mode
-        json_out.emit_event("ready", {"agent": "pig-code", "mode": "json"})
+        json_out.emit_event("ready", {"agent": "jay-code", "mode": "json"})
 
         while True:
             try:
@@ -326,9 +326,9 @@ def handoff(
     goal: str = typer.Option("", "--goal", help="Original task goal"),
 ):
     """Generate a handoff document for the current session."""
-    from .handoff import HandoffData, generate_handoff, extract_handoff_data_from_history
+    from .handoff import generate_handoff, extract_handoff_data_from_history
 
-    progress_path = workspace / ".agents" / "progress.json"
+    progress_path = workspace / ".jayclaw" / "progress.json"
     data = extract_handoff_data_from_history([], progress_path)
     if goal:
         data.goal = goal

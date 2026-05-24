@@ -1,6 +1,6 @@
 """Data models for web UI."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -17,6 +17,7 @@ class ChatRequest(BaseModel):
     """Chat request from client."""
 
     message: str
+    attachments: list[dict[str, Any]] | None = None
     conversation_id: str | None = None
 
 

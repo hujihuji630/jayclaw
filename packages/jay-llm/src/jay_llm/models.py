@@ -9,7 +9,7 @@ class Message(BaseModel):
     """A message in a conversation."""
 
     role: Literal["system", "user", "assistant", "tool"]
-    content: str
+    content: str | list[dict[str, Any]]
     metadata: dict[str, Any] | None = None
 
 

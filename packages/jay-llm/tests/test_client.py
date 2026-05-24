@@ -8,7 +8,7 @@ from jay_llm import LLM, Config, Message
 
 def test_llm_initialization_with_provider():
     """Test LLM initialization with provider."""
-    with patch("pig_llm.providers.openai.OpenAIProvider") as MockProvider:
+    with patch("jay_llm.providers.openai.OpenAIProvider") as MockProvider:
         MockProvider.return_value = Mock()
         llm = LLM(provider="openai", api_key="test-key")
         assert llm.config.provider == "openai"
@@ -18,7 +18,7 @@ def test_llm_initialization_with_provider():
 def test_llm_initialization_with_config():
     """Test LLM initialization with config."""
     config = Config(provider="openai", api_key="test-key", model="gpt-4")
-    with patch("pig_llm.providers.openai.OpenAIProvider") as MockProvider:
+    with patch("jay_llm.providers.openai.OpenAIProvider") as MockProvider:
         MockProvider.return_value = Mock()
         llm = LLM(config=config)
         assert llm.config == config
@@ -32,7 +32,7 @@ def test_llm_unknown_provider():
 
 def test_llm_complete_creates_messages():
     """Test complete method creates proper messages."""
-    with patch("pig_llm.providers.openai.OpenAIProvider") as MockProvider:
+    with patch("jay_llm.providers.openai.OpenAIProvider") as MockProvider:
         mock_provider = Mock()
         MockProvider.return_value = mock_provider
 
@@ -50,7 +50,7 @@ def test_llm_complete_creates_messages():
 
 def test_llm_complete_without_system():
     """Test complete without system message."""
-    with patch("pig_llm.providers.openai.OpenAIProvider") as MockProvider:
+    with patch("jay_llm.providers.openai.OpenAIProvider") as MockProvider:
         mock_provider = Mock()
         MockProvider.return_value = mock_provider
 
@@ -66,7 +66,7 @@ def test_llm_complete_without_system():
 
 def test_llm_chat():
     """Test chat method with message list."""
-    with patch("pig_llm.providers.openai.OpenAIProvider") as MockProvider:
+    with patch("jay_llm.providers.openai.OpenAIProvider") as MockProvider:
         mock_provider = Mock()
         MockProvider.return_value = mock_provider
 

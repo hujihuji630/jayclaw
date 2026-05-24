@@ -20,8 +20,10 @@ JayClaw 是一个模块化 Python AI Agent 框架，支持 14 个主流 LLM 提�
 - [快速开始](#快速开始)
 - [三种启动方式](#三种启动方式)
 - [主要特性](#主要特性)
+- [最近新增能力](#最近新增能力)
 - [包结构](#包结构)
 - [支持的 LLM 提供商](#支持的-llm-提供商)
+- [安全注意事项](#安全注意事项)
 - [开发](#开发)
 - [参与贡献](#参与贡献)
 - [License](#license)
@@ -40,12 +42,16 @@ cd jayclaw
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# 安装所有包
+# 安装所有包（顺序敏感：被依赖的包必须先装）
 pip install -e "packages/jay-llm"
+pip install -e "packages/jay-tui"
 pip install -e "packages/jay-agent-core"
 pip install -e "packages/jay-agent-tools[web]"
 pip install -e "packages/jay-coding-agent"
 pip install -e "packages/jay-web-ui"
+
+# 可选：消息平台 Bot（Slack / Discord / Telegram / WhatsApp / 飞书）
+# pip install -e "packages/jay-messenger"
 ```
 
 ### 2. 配置 API Key
@@ -334,6 +340,68 @@ Agent 运行时通过事件回调（`AgentEventCallback`）暴露完整的执行
 
 ---
 
+## 最近新增能力
+
+下面这些能力在 P0/P1 阶段陆续落地，README 早期版本未覆盖，单独列在这里。
+
+### AGENTS.md 工作目录自动维护
+
+- **首次进入工作目录**：若根目录没有 `AGENTS.md`，CLI / Web UI 会询问是否生成一份「地图式」AGENTS.md（扫目录 + 一次 LLM 调用起草）。生成后自动注入到 system prompt，本次会话立刻生效。
+- **会话结束时**：如果本次会话超过 2 轮用户输入，会询问是否将「踩坑教训 / 用户明确表达的硬约束」抽取出来追加到 Known Pitfalls / Always Loaded 段，写入前展示 unified diff 让你确认。
+- **跳过策略**：选「永不」会写入 `.agents/.no-agents-md` 标记，今后不再询问；可用 `/agents-init`、`/agents-summarize` 强制重跑。
+- 实现：[`jay_coding_agent.agents_md`](packages/jay-coding-agent/src/jay_coding_agent/agents_md.py)。
+
+### 任务交接文档（HANDOFFS/）
+
+当上下文撑得太满时，可以让 LLM 写一份结构化交接文档供新会话/新 Agent 接力：
+
+- 在 Web UI 点击「Handoff」按钮，或 CLI 中输入 `/handoff [任务关键词]`。
+- 文档落到 `<workspace>/HANDOFFS/handoff_YYYYMMDD_HHMMSS.md`，固定 6 个章节：原始目标 / 已完成 / 当前状态 / 待办 / 相关文件 / 关键决策与约束。
+- LLM 调用失败会自动 fallback 到模板（基于历史的启发式抽取 + `.agents/progress.json`）。
+- 新会话启动会自动检测最近的 handoff，并提示注入。
+- 实现：[`jay_coding_agent.handoff`](packages/jay-coding-agent/src/jay_coding_agent/handoff.py)。
+
+### 上下文利用率监控
+
+- Web UI 标题栏会实时显示当前对话占模型上下文窗口的百分比，并按 40% / 70% / 85% 三档变色。
+- CLI 命令 `/context` 显示同样的信息。
+- 上下文窗口大小由 [`jay_llm.detect_context_window`](packages/jay-llm/src/jay_llm/context_window.py) 解析（family 前缀表 + provider 默认值 + `LLM_CONTEXT_WINDOW` 环境变量覆盖），覆盖 OpenAI / Anthropic / Gemini / DeepSeek / GLM / Qwen 等家族。
+- 主动压缩走 `/api/compact`（Web UI 的 Compact 按钮），优先使用 LLM 摘要（Level 3），失败回退到结构化截断（Level 2）。
+
+### 结构化进度追踪（.agents/progress.json）
+
+- Agent 可在多步任务中通过 `update_progress` 工具更新一份结构化 JSON，记录每一步的状态（pending / in_progress / completed / failed）。
+- Handoff 生成时会读取这份文件，让新会话直接看到「已经做完什么 / 还差什么」。
+- 实现：[`jay_agent_core.progress`](packages/jay-agent-core/src/jay_agent_core/progress.py)。
+
+### 端到端验证工具
+
+- `cli_check(command, expected_exit_code, stdout_contains, …)`：跑一条 CLI 命令并断言退出码 / stdout。
+- `http_check(url, expected_status, body_contains, …)`：HTTP 请求断言。
+- `browser_check(url, action_script)`：可选的 Playwright 集成，给 UI 改动做"真的点过"验证。
+- 三者统一返回 `CheckResult { name, status, message, duration_ms }`，便于 Agent 在「改完代码 → 自己验」流程中调用。
+- 实现：[`jay_agent_tools.e2e`](packages/jay-agent-tools/src/jay_agent_tools/e2e/)。
+
+### 面向 Agent 的 Linter 框架
+
+`jay-agent-tools` 新增 `linters/` 子包，所有 Lint 都返回 `LintFinding { file, line, code, message, suggestion }`——给 Agent 看的不只是"你错了"，还附带"应该这么改"：
+
+- `no_print`：检测残留 `print()`，建议改用 `logger`。
+- `tool_envelope`：检测工具直接 return dict 而未走 `ToolResult` 包装。
+- `internal_field`：检测 tool schema 内部字段未加 `_` 前缀。
+- `pinyin_naming`：检测拼音命名并给出英文替换建议（含 camelCase / snake_case 两种风格）。
+
+### 视觉模型降级
+
+主模型不支持视觉时，可以在 Web UI 配置面板里指定一个视觉降级模型。当上传图片或扫描型 PDF 时，自动调用视觉模型先做内容提取，再把结果转交主模型回答——避免「主模型看不懂图直接拒答」。`process_attachments` 也会自动把扫描 PDF 渲染为 PNG（最多 20 页）。
+
+### 流式 Agent 取消与转向
+
+- Web UI 顶部「中止」按钮在生成中可点：后端 `/api/cancel` 设置 `_cancel_event`，前端 SSE 链路同步关闭——不再出现「前端切了后端还在跑」。
+- 运行中输入 `! <内容>`（CLI）或在 Web UI 调用 `/api/interrupt`（POST `{message}`）能把"转向"消息插入 MessageQueue，Agent 在当前 tool 调用结束后立刻处理。
+
+---
+
 ## 包结构
 
 | 包 | 版本 | 说明 |
@@ -402,12 +470,49 @@ LLM_MODEL=your-local-model
 
 ---
 
+## 安全注意事项
+
+JayClaw 默认面向**本地开发**场景。如果要把 Web UI 暴露到 `0.0.0.0` 或公网，请提前阅读以下条款，否则可能导致任意代码执行 / 文件泄漏：
+
+### 真实凭证
+
+- **永远不要把真实 API Key 提交到仓库**。`.env` 已在 `.gitignore` 中，但请确保 `examples/.env` 也保持在仓库之外。
+- 上传附件时，附件解析器（[`jay_web_ui.attachments`](packages/jay-web-ui/src/jay_web_ui/attachments.py)）会**拒绝**将以下文件作为文本注入到 LLM 上下文：`.env*`、`.pem`、`.key`、`id_rsa` / `id_ed25519`、`credentials.json`、`.npmrc` / `.pypirc` / `.netrc` 等。
+- 视觉模型走的是用户配置的同一组 API Key——确保该模型托管在受信任的服务端。
+
+### Web UI 默认假设「单机受信」
+
+下列端点没有鉴权层，默认只绑定 `127.0.0.1`：
+
+| 端点 | 风险 |
+|---|---|
+| `POST /api/tools` | 在服务进程内 `exec()` 客户端上传的 Python 代码（动态工具注入）|
+| `POST /api/upload` | 写文件到 `<workspace>/.uploads/`（已加路径穿越校验）|
+| `POST /api/agents-md/*` | 写 `<workspace>/AGENTS.md`（已加路径穿越校验 + 内容大小限制 256KiB） |
+| `POST /api/workspace` | 切换工作目录（任意可读路径） |
+| `GET /api/browse[/native]` | 列举系统目录 / 弹原生文件选择器 |
+
+**建议**：
+
+- 不要修改 `host` 为 `0.0.0.0` 之前在 server 前面挂一层鉴权（反向代理 + Basic Auth，或者自行加一个 token middleware）。
+- 启用 `cors=True` 时务必同时传 `cors_allow_origins=[...]`——不要复用 `*` + credentials 的组合（已被 FastAPI 拒绝）。
+- 动态工具注入（`/api/tools`）执行任意 Python，会读你的 SSH key、删文件、连外网。如果不需要这功能，部署前请把对应路由直接注释掉。
+
+### Markdown 渲染
+
+前端 Markdown 渲染器只允许 `http(s)://` / `mailto:` / `/`(站内) / `#`(锚点) 协议的链接，其他协议（`javascript:` / `data:` / `file:` 等）会被自动重写为 `#`，避免 LLM 输出注入。
+
+---
+
 ## 开发
 
 ```bash
 # 运行测试
 pytest packages/jay-agent-tools/tests/ -v
 pytest packages/jay-agent-core/tests/ -v
+pytest packages/jay-coding-agent/tests/ -v
+pytest packages/jay-web-ui/tests/ -v
+pytest packages/jay-llm/tests/ -v
 
 # 代码检查与格式化
 ruff check packages/

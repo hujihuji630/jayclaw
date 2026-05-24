@@ -25,8 +25,8 @@ def test_find_agents_md(temp_workspace):
     # Create AGENTS.md in workspace
     (temp_workspace / "AGENTS.md").write_text("# Project context")
 
-    # Create in .agents
-    agents_dir = temp_workspace / ".agents"
+    # Create in .jayclaw
+    agents_dir = temp_workspace / ".jayclaw"
     agents_dir.mkdir()
     (agents_dir / "AGENTS.md").write_text("# More context")
 

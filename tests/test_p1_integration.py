@@ -60,7 +60,7 @@ def test_progress_and_handoff_interop(tmp_path):
         "u", {"workspace": str(tmp_path)}, None
     ))
 
-    progress_path = tmp_path / ".agents" / "progress.json"
+    progress_path = tmp_path / ".jayclaw" / "progress.json"
     data = extract_handoff_data_from_history(
         [{"role": "user", "content": "Build X"}],
         progress_path,

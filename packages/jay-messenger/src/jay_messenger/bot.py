@@ -1,12 +1,15 @@
 """Universal messenger bot core."""
 
 import asyncio
+import logging
 import time
 from collections.abc import Iterator
 from functools import partial
 from pathlib import Path
 
 from jay_agent_core import Agent
+
+logger = logging.getLogger(__name__)
 
 from .message import UniversalMessage
 from .platform import MessagePlatform
@@ -114,7 +117,7 @@ class MessengerBot:
                         thread_id=message.thread_id if message.is_thread else None,
                     )
                 except Exception:
-                    pass
+                    logger.exception("failed to deliver error reply to channel %s", message.channel_id)
 
     async def _handle_message_streaming(
         self,
@@ -173,7 +176,7 @@ class MessengerBot:
                     thread_id=message.thread_id if message.is_thread else None,
                 )
             except Exception:
-                pass
+                logger.exception("failed to deliver streaming-error reply to channel %s", message.channel_id)
 
     def start(self) -> None:
         """Start all platforms.

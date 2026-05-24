@@ -59,6 +59,8 @@ CORE_TOOL_NAMES: frozenset[str] = frozenset(
         "get_current_time",
         "read_knowledge",
         "update_progress",
+        "scratchpad",
+        "delegate",
     }
 )
 
@@ -164,7 +166,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     _fn(
         "update_progress",
         "Update task progress. Call this to initialize a plan or mark steps as completed. "
-        "External tools (IDE, Web UI) read .agents/progress.json to display progress.",
+        "External tools (IDE, Web UI) read .jayclaw/progress.json to display progress.",
         {
             "properties": {
                 "action": {
@@ -195,6 +197,54 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
         permission="storage",
     ),
+    _fn(
+        "scratchpad",
+        "Persistent structured notes for long tasks. Write key findings, decisions, "
+        "and next steps so they survive context resets. Notes are stored in "
+        ".jayclaw/scratchpad.md and auto-loaded in new sessions.",
+        {
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["read", "append", "clear"],
+                    "description": "Action: read (view notes), append (add note), clear (reset)",
+                },
+                "section": {
+                    "type": "string",
+                    "enum": ["progress", "findings", "decisions", "next_steps"],
+                    "description": "Section to operate on. Omit to read/clear all.",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Note content (required for append)",
+                },
+            },
+            "required": ["action"],
+        },
+        permission="storage",
+    ),
+    _fn(
+        "delegate",
+        "Delegate a research or analysis task to a sub-agent with its own isolated context. "
+        "The sub-agent has read-only file tools, runs independently, and returns a compressed "
+        "summary. USE WHEN: searching 3+ files, exploring unfamiliar code areas, broad pattern "
+        "finding, or any task where exploration would consume significant context. "
+        "DO NOT USE for simple single-file reads or tasks requiring file writes.",
+        {
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "Clear description of what to research or analyze",
+                },
+                "max_tokens": {
+                    "type": "integer",
+                    "description": "Maximum tokens for the returned summary (default 1500)",
+                },
+            },
+            "required": ["task"],
+        },
+        permission="read",
+    ),
 ]
 
 
@@ -218,6 +268,8 @@ TOOL_BUDGETS: dict[str, dict[str, int]] = {
     "get_current_time": {"timeout": 1, "max_retries": 0},
     "read_knowledge": {"timeout": 5, "max_retries": 1},
     "update_progress": {"timeout": 2, "max_retries": 0},
+    "scratchpad": {"timeout": 2, "max_retries": 0},
+    "delegate": {"timeout": 120, "max_retries": 0},
 }
 
 
@@ -248,6 +300,8 @@ PARALLEL_SAFE_TOOLS: frozenset[str] = frozenset(
         "get_current_time",
         "discover_tools",
         "read_knowledge",
+        "scratchpad",
+        "delegate",
         # Read-only tools (safe to run in parallel)
         "search_web",
         "read_webpage",

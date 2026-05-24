@@ -27,6 +27,43 @@ class AnthropicProvider(Provider):
             max_retries=config.max_retries,
         )
 
+    @staticmethod
+    def _convert_content_blocks(content) -> list[dict] | str:
+        """Convert OpenAI-style content (str or list of blocks) to Anthropic blocks."""
+        if isinstance(content, str):
+            return content
+        if not isinstance(content, list):
+            return str(content)
+
+        result = []
+        for block in content:
+            btype = block.get("type")
+            if btype == "text":
+                result.append({"type": "text", "text": block.get("text", "")})
+            elif btype == "image_url":
+                url = block.get("image_url", {}).get("url", "")
+                if url.startswith("data:"):
+                    # data:image/png;base64,XXX
+                    try:
+                        header, b64data = url.split(",", 1)
+                        media_type = header.split(":", 1)[1].split(";", 1)[0]
+                    except (ValueError, IndexError):
+                        continue
+                    result.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": b64data,
+                        },
+                    })
+                else:
+                    result.append({
+                        "type": "image",
+                        "source": {"type": "url", "url": url},
+                    })
+        return result if result else ""
+
     def _convert_messages(self, messages: list[Message]) -> tuple[str | None, list[dict]]:
         """Convert internal messages to Anthropic format.
 
@@ -38,7 +75,12 @@ class AnthropicProvider(Provider):
 
         for msg in messages:
             if msg.role == "system":
-                system_message = msg.content
+                if isinstance(msg.content, str):
+                    system_message = msg.content
+                elif isinstance(msg.content, list):
+                    system_message = "\n".join(
+                        b.get("text", "") for b in msg.content if b.get("type") == "text"
+                    )
 
             elif msg.role == "assistant" and msg.metadata and "tool_calls" in msg.metadata:
                 # Rebuild assistant message with tool_use blocks
@@ -46,7 +88,10 @@ class AnthropicProvider(Provider):
 
                 # Add text block if present
                 if msg.content:
-                    content.append({"type": "text", "text": msg.content})
+                    if isinstance(msg.content, str):
+                        content.append({"type": "text", "text": msg.content})
+                    elif isinstance(msg.content, list):
+                        content.extend(self._convert_content_blocks(msg.content) or [])
 
                 # Add tool_use blocks
                 for tc in msg.metadata["tool_calls"]:
@@ -64,6 +109,11 @@ class AnthropicProvider(Provider):
             elif msg.role == "tool" and msg.metadata:
                 # Convert tool result to tool_result block
                 tool_use_id = msg.metadata.get("tool_call_id")
+                tool_content = msg.content
+                if isinstance(tool_content, list):
+                    tool_content = "\n".join(
+                        b.get("text", "") for b in tool_content if b.get("type") == "text"
+                    )
                 anthropic_messages.append(
                     {
                         "role": "user",
@@ -71,15 +121,16 @@ class AnthropicProvider(Provider):
                             {
                                 "type": "tool_result",
                                 "tool_use_id": tool_use_id,
-                                "content": msg.content,
+                                "content": tool_content,
                             }
                         ],
                     }
                 )
 
             else:
-                # Regular message
-                anthropic_messages.append({"role": msg.role, "content": msg.content})
+                # Regular message — may contain multimodal blocks
+                converted = self._convert_content_blocks(msg.content)
+                anthropic_messages.append({"role": msg.role, "content": converted})
 
         return system_message, anthropic_messages
 
@@ -252,8 +303,22 @@ class AnthropicProvider(Provider):
         max_tokens: int | None = None,
         **kwargs,
     ) -> AsyncIterator[StreamChunk]:
-        """Async stream a completion."""
+        """Async stream a completion.
+
+        Yields incremental text chunks as the model produces them, then a final
+        chunk carrying any accumulated ``tool_use`` calls translated into the
+        OpenAI-style ``tool_calls`` payload the agent loop expects.
+        """
         system, anthropic_messages = self._convert_messages(messages)
+
+        # Convert tools if present so streamed responses can include tool_use blocks.
+        tools = self._convert_tools(kwargs.get("tools"))
+        if tools:
+            kwargs = {k: v for k, v in kwargs.items() if k != "tools"}
+            kwargs["tools"] = tools
+
+        # Per-block accumulator: index -> {"id", "name", "input": str}
+        tool_use_acc: dict[int, dict] = {}
 
         async with self.async_client.messages.stream(
             model=model,
@@ -263,5 +328,46 @@ class AnthropicProvider(Provider):
             max_tokens=max_tokens or 4096,
             **kwargs,
         ) as stream:
-            async for text in stream.text_stream:
-                yield StreamChunk(content=text, finish_reason=None)
+            async for event in stream:
+                event_type = getattr(event, "type", None)
+
+                if event_type == "content_block_start":
+                    block = getattr(event, "content_block", None)
+                    if getattr(block, "type", None) == "tool_use":
+                        tool_use_acc[event.index] = {
+                            "id": block.id,
+                            "name": block.name,
+                            "input": "",
+                        }
+
+                elif event_type == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    delta_type = getattr(delta, "type", None)
+                    if delta_type == "text_delta":
+                        text = getattr(delta, "text", "") or ""
+                        if text:
+                            yield StreamChunk(content=text, finish_reason=None)
+                    elif delta_type == "input_json_delta":
+                        idx = event.index
+                        if idx in tool_use_acc:
+                            tool_use_acc[idx]["input"] += getattr(delta, "partial_json", "") or ""
+
+        # Final chunk carries the accumulated tool_calls (if any) so the agent
+        # loop can dispatch them.
+        if tool_use_acc:
+            tool_calls = []
+            for idx in sorted(tool_use_acc):
+                acc = tool_use_acc[idx]
+                tool_calls.append({
+                    "id": acc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": acc["name"],
+                        "arguments": acc["input"] or "{}",
+                    },
+                })
+            yield StreamChunk(
+                content="",
+                finish_reason="tool_calls",
+                tool_calls=tool_calls,
+            )

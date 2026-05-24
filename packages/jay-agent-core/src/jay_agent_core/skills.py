@@ -128,19 +128,19 @@ class SkillManager:
         Looks for:
         - Any provided directories
         - If no directories provided, also searches standard paths:
-          ~/.agents/skills/, .agents/skills/, .pi/skills/
+          ~/.jayclaw/skills/, .jayclaw/skills/, .pi/skills/
         """
         search_paths = []
 
         # Only add standard paths when no explicit directories given
         if not directories:
             home = Path.home()
-            if (home / ".agents" / "skills").exists():
-                search_paths.append(home / ".agents" / "skills")
+            if (home / ".jayclaw" / "skills").exists():
+                search_paths.append(home / ".jayclaw" / "skills")
 
             cwd = Path.cwd()
-            if (cwd / ".agents" / "skills").exists():
-                search_paths.append(cwd / ".agents" / "skills")
+            if (cwd / ".jayclaw" / "skills").exists():
+                search_paths.append(cwd / ".jayclaw" / "skills")
             if (cwd / ".pi" / "skills").exists():
                 search_paths.append(cwd / ".pi" / "skills")
 

@@ -147,7 +147,7 @@ def test_prompt_manager_contains(sample_template_file):
 def test_prompt_manager_discover(tmp_path):
     """Test discovering templates."""
     # Create prompts directory
-    prompts_dir = tmp_path / ".agents" / "prompts"
+    prompts_dir = tmp_path / ".jayclaw" / "prompts"
     prompts_dir.mkdir(parents=True)
 
     # Create templates

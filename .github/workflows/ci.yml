@@ -37,19 +37,16 @@ jobs:
         # and by explicit pip install of each package's extras below.
 
         # 1) Leaf packages (no local deps)
-        pip install --no-deps -e packages/pig-llm
-        pip install --no-deps -e packages/pig-tui
+        pip install --no-deps -e packages/jay-llm
+        pip install --no-deps -e packages/jay-tui
 
-        # 2) Packages depending on pig-llm
-        pip install --no-deps -e packages/pig-agent-core
-        pip install --no-deps -e packages/pig-web-ui
+        # 2) Packages depending on jay-llm
+        pip install --no-deps -e packages/jay-agent-core
+        pip install --no-deps -e packages/jay-web-ui
 
-        # 3) Packages depending on pig-agent-core
-        pip install --no-deps -e packages/pig-agent-tools
-
-        # 4) Packages depending on pig-llm + pig-agent-core + pig-tui
-        pip install --no-deps -e packages/pig-coding-agent
-        pip install --no-deps -e packages/pig-messenger
+        # 3) Packages depending on jay-llm + jay-agent-core + jay-tui
+        pip install --no-deps -e packages/jay-coding-agent
+        pip install --no-deps -e packages/jay-messenger
 
         # Install all third-party dependencies
         pip install openai anthropic pydantic rich prompt-toolkit \
@@ -63,14 +60,27 @@ jobs:
         ruff check packages/
         ruff format --check packages/
 
-    - name: Run type checking (strict for core packages)
+    - name: Run type checking (strict for hardened security/contract modules)
       shell: bash
       run: |
-        # Core packages must pass; outer packages allowed to fail for now.
-        mypy packages/jay-agent-core/src packages/jay-llm/src
-        mypy packages/jay-agent-tools/src packages/jay-coding-agent/src || true
+        # Modules with explicit strict-typing contract. New code that lands
+        # here MUST stay strict-clean — these are our security/correctness
+        # foundations and we don't want regression.
+        mypy --strict \
+          packages/jay-llm/src/jay_llm/context_window.py \
+          packages/jay-coding-agent/src/jay_coding_agent/handoff.py \
+          packages/jay-web-ui/src/jay_web_ui/security.py
 
-    - name: Run tests
+        # Whole-package strict — currently aspirational. Remove `|| true`
+        # when each package reaches strict-clean.
+        mypy --strict packages/jay-llm/src || true
+        mypy --strict packages/jay-agent-core/src || true
+
+        # Loose typecheck for the rest (catches obvious errors).
+        mypy packages/jay-agent-core/src packages/jay-llm/src
+        mypy packages/jay-coding-agent/src packages/jay-web-ui/src || true
+
+    - name: Run tests with coverage gate
       shell: bash
       run: |
         # Run root tests separately, then each package
@@ -81,8 +91,21 @@ jobs:
             pytest "$pkg/tests" -v --cov=packages --cov-append
           fi
         done
+
         # Generate final coverage report
         coverage xml
+        coverage report
+
+        # Gate: modules hardened in this round must stay >= 95% line
+        # coverage (90% for security.py — its Linux-only branches get
+        # skipped on the Windows leg of the matrix).
+        # Anything dropping below those numbers means a test got deleted
+        # or new uncovered branches were added — fix the tests, not the gate.
+        # Globs use `*name.py` rather than full paths so they match on both
+        # forward-slash (Linux) and backslash (Windows) coverage data.
+        coverage report --include='*context_window.py' --fail-under=95
+        coverage report --include='*handoff.py' --fail-under=95
+        coverage report --include='*security.py' --fail-under=90
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4

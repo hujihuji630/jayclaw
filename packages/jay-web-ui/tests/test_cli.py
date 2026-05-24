@@ -22,8 +22,8 @@ def test_cli_imports():
     assert console is not None
 
 
-@patch("pig_web_ui.cli.LLM")
-@patch("pig_web_ui.cli.ChatServer")
+@patch("jay_web_ui.cli.LLM")
+@patch("jay_web_ui.cli.ChatServer")
 def test_main_with_defaults(mock_server_class, mock_llm_class, mock_env):
     """Test main with default settings."""
     # Setup mocks
@@ -35,7 +35,7 @@ def test_main_with_defaults(mock_server_class, mock_llm_class, mock_env):
     mock_server.run = Mock()
     mock_server_class.return_value = mock_server
 
-    with patch("pig_web_ui.cli.console"):
+    with patch("jay_web_ui.cli.console"):
         main()
 
         # Verify LLM created
@@ -49,8 +49,8 @@ def test_main_with_defaults(mock_server_class, mock_llm_class, mock_env):
         mock_server.run.assert_called_once()
 
 
-@patch("pig_web_ui.cli.LLM")
-@patch("pig_web_ui.cli.ChatServer")
+@patch("jay_web_ui.cli.LLM")
+@patch("jay_web_ui.cli.ChatServer")
 def test_main_with_custom_model(mock_server_class, mock_llm_class, mock_env):
     """Test main with custom model."""
     mock_llm = Mock()
@@ -60,7 +60,7 @@ def test_main_with_custom_model(mock_server_class, mock_llm_class, mock_env):
     mock_server = Mock()
     mock_server_class.return_value = mock_server
 
-    with patch("pig_web_ui.cli.console"):
+    with patch("jay_web_ui.cli.console"):
         main(model="gpt-4")
 
         # Verify model was set
@@ -68,8 +68,8 @@ def test_main_with_custom_model(mock_server_class, mock_llm_class, mock_env):
         assert call_args.kwargs["model"] == "gpt-4"
 
 
-@patch("pig_web_ui.cli.LLM")
-@patch("pig_web_ui.cli.ChatServer")
+@patch("jay_web_ui.cli.LLM")
+@patch("jay_web_ui.cli.ChatServer")
 def test_main_with_custom_port(mock_server_class, mock_llm_class, mock_env):
     """Test main with custom port."""
     mock_llm = Mock()
@@ -78,7 +78,7 @@ def test_main_with_custom_port(mock_server_class, mock_llm_class, mock_env):
     mock_server = Mock()
     mock_server_class.return_value = mock_server
 
-    with patch("pig_web_ui.cli.console"):
+    with patch("jay_web_ui.cli.console"):
         main(port=8080)
 
         # Verify server created with custom port
@@ -86,8 +86,8 @@ def test_main_with_custom_port(mock_server_class, mock_llm_class, mock_env):
         assert call_args.kwargs["port"] == 8080
 
 
-@patch("pig_web_ui.cli.LLM")
-@patch("pig_web_ui.cli.ChatServer")
+@patch("jay_web_ui.cli.LLM")
+@patch("jay_web_ui.cli.ChatServer")
 def test_main_with_cors(mock_server_class, mock_llm_class, mock_env):
     """Test main with CORS enabled."""
     mock_llm = Mock()
@@ -96,7 +96,7 @@ def test_main_with_cors(mock_server_class, mock_llm_class, mock_env):
     mock_server = Mock()
     mock_server_class.return_value = mock_server
 
-    with patch("pig_web_ui.cli.console"):
+    with patch("jay_web_ui.cli.console"):
         main(cors=True)
 
         # Verify server created with CORS
@@ -104,8 +104,8 @@ def test_main_with_cors(mock_server_class, mock_llm_class, mock_env):
         assert call_args.kwargs["cors"] is True
 
 
-@patch("pig_web_ui.cli.LLM")
-@patch("pig_web_ui.cli.ChatServer")
+@patch("jay_web_ui.cli.LLM")
+@patch("jay_web_ui.cli.ChatServer")
 def test_main_with_custom_title(mock_server_class, mock_llm_class, mock_env):
     """Test main with custom title."""
     mock_llm = Mock()
@@ -114,7 +114,7 @@ def test_main_with_custom_title(mock_server_class, mock_llm_class, mock_env):
     mock_server = Mock()
     mock_server_class.return_value = mock_server
 
-    with patch("pig_web_ui.cli.console"):
+    with patch("jay_web_ui.cli.console"):
         main(title="Custom Chat")
 
         # Verify server created with title
@@ -126,12 +126,12 @@ def test_main_without_api_key():
     """Test main without API key."""
     with patch.dict(os.environ, {}, clear=True):
         with pytest.raises(SystemExit):
-            with patch("pig_web_ui.cli.console"):
+            with patch("jay_web_ui.cli.console"):
                 main()
 
 
-@patch("pig_web_ui.cli.LLM")
-@patch("pig_web_ui.cli.ChatServer")
+@patch("jay_web_ui.cli.LLM")
+@patch("jay_web_ui.cli.ChatServer")
 def test_main_with_different_provider(mock_server_class, mock_llm_class):
     """Test main with different provider."""
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
@@ -141,7 +141,7 @@ def test_main_with_different_provider(mock_server_class, mock_llm_class):
         mock_server = Mock()
         mock_server_class.return_value = mock_server
 
-        with patch("pig_web_ui.cli.console"):
+        with patch("jay_web_ui.cli.console"):
             main(provider="anthropic")
 
             # Verify correct provider
@@ -149,8 +149,8 @@ def test_main_with_different_provider(mock_server_class, mock_llm_class):
             assert call_args.kwargs["provider"] == "anthropic"
 
 
-@patch("pig_web_ui.cli.LLM")
-@patch("pig_web_ui.cli.ChatServer")
+@patch("jay_web_ui.cli.LLM")
+@patch("jay_web_ui.cli.ChatServer")
 def test_main_keyboard_interrupt(mock_server_class, mock_llm_class, mock_env):
     """Test main handles keyboard interrupt."""
     mock_llm = Mock()
@@ -160,18 +160,18 @@ def test_main_keyboard_interrupt(mock_server_class, mock_llm_class, mock_env):
     mock_server.run = Mock(side_effect=KeyboardInterrupt)
     mock_server_class.return_value = mock_server
 
-    with patch("pig_web_ui.cli.console") as mock_console:
+    with patch("jay_web_ui.cli.console") as mock_console:
         main()
 
         # Should handle gracefully and print message
         mock_console.print.assert_called()
 
 
-@patch("pig_web_ui.cli.LLM")
+@patch("jay_web_ui.cli.LLM")
 def test_main_llm_creation_error(mock_llm_class, mock_env):
     """Test main handles LLM creation error."""
     mock_llm_class.side_effect = Exception("API error")
 
     with pytest.raises(SystemExit):
-        with patch("pig_web_ui.cli.console"):
+        with patch("jay_web_ui.cli.console"):
             main()

@@ -55,8 +55,8 @@ class Progress:
         self.completed_at = now
 
     def save(self, workspace: Path) -> Path:
-        """Write progress to .agents/progress.json."""
-        agents_dir = workspace / ".agents"
+        """Write progress to .jayclaw/progress.json."""
+        agents_dir = workspace / ".jayclaw"
         agents_dir.mkdir(exist_ok=True)
         path = agents_dir / "progress.json"
         path.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False), encoding="utf-8")
@@ -64,7 +64,7 @@ class Progress:
 
     @classmethod
     def load(cls, workspace: Path) -> Progress | None:
-        path = workspace / ".agents" / "progress.json"
+        path = workspace / ".jayclaw" / "progress.json"
         if not path.exists():
             return None
         data = json.loads(path.read_text(encoding="utf-8"))

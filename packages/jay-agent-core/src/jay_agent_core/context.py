@@ -30,7 +30,7 @@ class ContextManager:
         found = []
 
         # Global config
-        global_file = Path.home() / ".agents" / filename
+        global_file = Path.home() / ".jayclaw" / filename
         if global_file.exists():
             found.append(global_file)
 
@@ -53,8 +53,8 @@ class ContextManager:
             if file_path.exists() and file_path not in found:
                 found.append(file_path)
 
-            # Check .agents directory
-            agents_file = current / ".agents" / filename
+            # Check .jayclaw directory
+            agents_file = current / ".jayclaw" / filename
             if agents_file.exists() and agents_file not in found:
                 found.append(agents_file)
 
@@ -318,23 +318,74 @@ class CompressionConfig:
     max_tool_result_chars: int = 1000
 
 
-def compress_level1(messages: list[dict[str, Any]], max_chars: int = 1000) -> list[dict[str, Any]]:
-    """Level 1: Truncate tool result messages.
-
-    Args:
-        messages: Message list
-        max_chars: Maximum characters per tool result
+def split_agents_md(raw: str) -> tuple[str, str]:
+    """Split AGENTS.md into constraints (Always Loaded) and knowledge (rest).
 
     Returns:
-        Compressed message list
+        (constraints_text, knowledge_text)
     """
+    lines = raw.splitlines()
+    constraints_lines: list[str] = []
+    knowledge_lines: list[str] = []
+    in_always_loaded = False
+    past_always_loaded = False
+
+    for line in lines:
+        stripped = line.strip()
+        is_h2 = stripped.startswith("## ") and not stripped.startswith("### ")
+
+        if not in_always_loaded and not past_always_loaded:
+            if is_h2 and "always loaded" in stripped.lower():
+                in_always_loaded = True
+                continue
+            # Lines before any section go to knowledge (title, preamble)
+            knowledge_lines.append(line)
+        elif in_always_loaded:
+            if is_h2:
+                in_always_loaded = False
+                past_always_loaded = True
+                knowledge_lines.append(line)
+            else:
+                constraints_lines.append(line)
+        else:
+            knowledge_lines.append(line)
+
+    return "\n".join(constraints_lines).strip(), "\n".join(knowledge_lines).strip()
+
+
+def _find_recent_boundary(messages: list[dict[str, Any]], protected_turns: int = 2) -> int:
+    """Find the index where 'recent' (protected) messages start.
+
+    Returns the index of the Nth-from-last user message. Messages at or after
+    this index are protected from aggressive compression. If the conversation
+    is too short to meaningfully distinguish old from recent (< 8 messages),
+    returns len(messages) so nothing is protected — the caller already decided
+    compression is needed.
+    """
+    if len(messages) < 8:
+        return len(messages)
+    user_indices: list[int] = [
+        i for i, m in enumerate(messages) if m.get("role") == "user"
+    ]
+    if len(user_indices) >= protected_turns:
+        return user_indices[-protected_turns]
+    return len(messages)
+
+
+def compress_level1(messages: list[dict[str, Any]], max_chars: int = 1000) -> list[dict[str, Any]]:
+    """Level 1: Truncate old tool results aggressively, protect recent ones.
+
+    Tool results older than 2 user turns are truncated to 200 chars.
+    Recent tool results use the standard max_chars limit.
+    """
+    recent_start = _find_recent_boundary(messages)
     compressed = []
-    for msg in messages:
+    for i, msg in enumerate(messages):
         if msg.get("role") == "tool":
             content = msg.get("content", "")
-            if len(content) > max_chars:
-                truncation_msg = f"\n\n[... truncated {len(content) - max_chars} chars]"
-                truncated = content[:max_chars] + truncation_msg
+            limit = max_chars if i >= recent_start else 200
+            if len(content) > limit:
+                truncated = content[:limit] + f"\n[... truncated {len(content) - limit} chars]"
                 compressed.append({**msg, "content": truncated})
             else:
                 compressed.append(msg)
@@ -344,41 +395,32 @@ def compress_level1(messages: list[dict[str, Any]], max_chars: int = 1000) -> li
 
 
 def compress_level2(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Level 2: Replace tool call/result pairs with summaries.
+    """Level 2: Replace old tool call/result pairs with summaries, keep user messages.
 
-    Args:
-        messages: Message list
-
-    Returns:
-        Compressed message list with summaries
+    Only compresses pairs older than 2 user turns. User messages are always preserved.
     """
+    recent_start = _find_recent_boundary(messages)
     compressed = []
     i = 0
     while i < len(messages):
         msg = messages[i]
 
-        # Look for assistant message with tool calls
-        if msg.get("role") == "assistant" and msg.get("tool_calls"):
-            tool_calls = msg.get("tool_calls", [])
+        if (
+            i < recent_start
+            and msg.get("role") == "assistant"
+            and (msg.get("tool_calls") or (msg.get("metadata") or {}).get("tool_calls"))
+        ):
+            tool_calls = msg.get("tool_calls") or (msg.get("metadata") or {}).get("tool_calls", [])
             tool_names = [tc.get("function", {}).get("name", "unknown") for tc in tool_calls]
 
-            # Collect following tool results
             j = i + 1
             tool_results = []
             while j < len(messages) and messages[j].get("role") == "tool":
                 tool_results.append(messages[j])
                 j += 1
 
-            # Create summary
             summary = f"[Tool execution: {', '.join(tool_names)} - {len(tool_results)} results]"
-            compressed.append(
-                {
-                    "role": "assistant",
-                    "content": summary,
-                }
-            )
-
-            # Skip the tool result messages
+            compressed.append({"role": "assistant", "content": summary})
             i = j
         else:
             compressed.append(msg)
@@ -388,67 +430,59 @@ def compress_level2(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def compress_level3(messages: list[dict[str, Any]], llm: Any) -> list[dict[str, Any]]:
-    """Level 3: LLM-summarize middle messages.
+    """Level 3: LLM-summarize middle messages, preserving user intent.
 
-    Keeps system prompt, recent messages, and summarizes the middle.
-
-    Args:
-        messages: Message list
-        llm: LLM client for summarization
-
-    Returns:
-        Compressed message list with LLM summary
+    Keeps system prompt + recent turns intact. Summarizes the middle with
+    explicit instruction to preserve user goals and key decisions.
     """
     if len(messages) <= 5:
         return messages
 
-    # Keep system prompt (first message if role=system)
     system_msg = []
     start_idx = 0
     if messages and messages[0].get("role") == "system":
         system_msg = [messages[0]]
         start_idx = 1
 
-    # Keep last 3 messages
-    recent = messages[-3:]
-    middle = messages[start_idx:-3]
+    recent_start = _find_recent_boundary(messages)
+    recent = messages[recent_start:]
+    middle = messages[start_idx:recent_start]
 
     if not middle:
         return messages
 
-    # Build summary prompt
+    # Extract user messages separately to preserve intent
+    user_intents = [
+        msg.get("content", "")[:300]
+        for msg in middle
+        if msg.get("role") == "user"
+    ]
+
     middle_text = "\n\n".join(
-        [f"{msg.get('role', 'unknown')}: {msg.get('content', '')[:200]}" for msg in middle]
+        f"{msg.get('role', '?')}: {msg.get('content', '')[:200]}" for msg in middle
     )
 
     summary_prompt = (
-        "Summarize this conversation history in 2-3 sentences, "
-        f"focusing on key decisions and context:\n\n{middle_text}\n\nSummary:"
+        "Summarize this conversation history in 2-3 sentences. "
+        "IMPORTANT: Preserve the user's original goals and key decisions made. "
+        f"Focus on WHAT was decided and WHY.\n\n{middle_text}\n\nSummary:"
     )
 
     try:
-        # Use LLM to summarize
+        from jay_llm import Message as _Msg
         response = await llm.achat(
-            messages=[{"role": "user", "content": summary_prompt}],
+            messages=[_Msg(role="user", content=summary_prompt)],
             max_tokens=200,
         )
         summary = response.content
 
-        # Build compressed messages
         compressed = (
             system_msg
-            + [
-                {
-                    "role": "assistant",
-                    "content": f"[Previous conversation summary: {summary}]",
-                }
-            ]
+            + [{"role": "assistant", "content": f"[Previous conversation summary: {summary}]"}]
             + recent
         )
-
         return compressed
     except Exception:
-        # If summarization fails, fall back to Level 2
         return compress_level2(messages)
 
 
@@ -513,8 +547,15 @@ def compute_utilization(
     max_tokens: int,
     config: CompressionConfig | None = None,
     previous_ratio: float | None = None,
+    model: str | None = None,
 ) -> ContextUtilization:
-    """Compute current context utilization."""
+    """Compute current context utilization.
+
+    Counts text content plus any structured fields that get sent to the LLM:
+    ``tool_calls`` on assistant messages and ``name`` on tool messages.
+    """
+    import json as _json
+
     from .token_counter import count_tokens
 
     if config is None:
@@ -524,7 +565,18 @@ def compute_utilization(
     for msg in messages:
         content = msg.get("content") or ""
         if isinstance(content, str):
-            total += count_tokens(content)
+            total += count_tokens(content, model=model)
+
+        metadata = msg.get("metadata") or {}
+        tool_calls = msg.get("tool_calls") or metadata.get("tool_calls")
+        if tool_calls:
+            try:
+                total += count_tokens(_json.dumps(tool_calls, ensure_ascii=False), model=model)
+            except (TypeError, ValueError):
+                pass
+        tool_name = msg.get("name") or metadata.get("name")
+        if isinstance(tool_name, str) and tool_name:
+            total += count_tokens(tool_name, model=model)
 
     ratio = total / max_tokens if max_tokens > 0 else 0.0
 

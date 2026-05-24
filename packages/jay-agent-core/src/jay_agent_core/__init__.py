@@ -8,7 +8,9 @@ from .context import (
     ContextManager,
     SystemPromptBuilder,
     compress_messages,
+    split_agents_md,
 )
+from .context_blocks import ContextAssembler, ContextBlock
 from .export import SessionExporter
 from .extensions import ExtensionAPI, ExtensionManager
 from .memory import InMemoryProvider, MemoryProvider, Message
@@ -38,6 +40,7 @@ from .tools.audit import ToolAuditEntry, ToolAuditLog
 from .tools.base import ToolResult as EnhancedToolResult
 from .tools.metrics import ToolMetrics, ToolMetricsCollector
 from .tools.registry import ToolRegistry as EnhancedToolRegistry
+from .mcp import MCPClient, MCPManager, MCPServerConfig, MCPServerStatus
 
 __version__ = "0.0.4"
 
@@ -60,6 +63,9 @@ __all__ = [
     "SystemPromptBuilder",
     "CompressionConfig",
     "compress_messages",
+    "split_agents_md",
+    "ContextAssembler",
+    "ContextBlock",
     # Observability
     "AgentEvent",
     "AgentEventType",
@@ -114,4 +120,9 @@ __all__ = [
     "OAuthProvider",
     "OAuthFlow",
     "TokenInfo",
+    # MCP
+    "MCPClient",
+    "MCPManager",
+    "MCPServerConfig",
+    "MCPServerStatus",
 ]

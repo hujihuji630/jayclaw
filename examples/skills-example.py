@@ -8,7 +8,7 @@ from jay_agent_core import SkillManager
 def create_sample_skill():
     """Create a sample skill for demonstration."""
     # Create skill directory
-    skill_dir = Path(".agents/skills/code-review")
+    skill_dir = Path(".jayclaw/skills/code-review")
     skill_dir.mkdir(parents=True, exist_ok=True)
 
     # Create SKILL.md

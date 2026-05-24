@@ -37,7 +37,7 @@ def test_coding_agent_creation(mock_llm, temp_workspace):
 
 def test_coding_agent_default_llm(temp_workspace):
     """Test agent with default LLM."""
-    with patch("pig_coding_agent.agent.LLM") as mock_llm_class:
+    with patch("jay_coding_agent.agent.LLM") as mock_llm_class:
         mock_llm = Mock()
         mock_llm_class.return_value = mock_llm
 
@@ -52,8 +52,9 @@ def test_coding_agent_has_tools(mock_llm, temp_workspace):
     # Agent should have tools from FileTools, CodeTools, ShellTools
     assert len(agent.agent.registry) > 0
 
-    # Check for some expected tools
-    tool_names = agent.agent.registry.list_tools()
+    # Check for some expected tools — registry.list_tools() returns Tool objects,
+    # so compare on the ``name`` attribute.
+    tool_names = {t.name for t in agent.agent.registry.list_tools()}
     assert "read_file" in tool_names
     assert "write_file" in tool_names
     assert "list_files" in tool_names
@@ -70,17 +71,19 @@ def test_coding_agent_system_prompt(mock_llm, temp_workspace):
 
 def test_coding_agent_run_once(mock_llm, temp_workspace):
     """Test running agent once."""
-    # Mock the agent's run method
-    with patch("pig_coding_agent.agent.Agent") as mock_agent_class:
+    # ``run_once`` awaits ``self.agent.arun()`` — mock that as an async return.
+    async def fake_arun(_):
+        return Mock(content="Test response")
+
+    with patch("jay_coding_agent.agent.Agent") as mock_agent_class:
         mock_agent_instance = Mock()
-        mock_agent_instance.run = Mock(return_value=Mock(content="Test response"))
+        mock_agent_instance.arun = fake_arun
         mock_agent_class.return_value = mock_agent_instance
 
         agent = CodingAgent(llm=mock_llm, workspace=str(temp_workspace))
         result = agent.run_once("Create a hello world function")
 
         assert result == "Test response"
-        mock_agent_instance.run.assert_called_once()
 
 
 def test_coding_agent_handle_exit_command(mock_llm, temp_workspace):
@@ -101,7 +104,7 @@ def test_coding_agent_handle_quit_command(mock_llm, temp_workspace):
 
 def test_coding_agent_handle_clear_command(mock_llm, temp_workspace):
     """Test handling clear command."""
-    with patch("pig_coding_agent.agent.Agent") as mock_agent_class:
+    with patch("jay_coding_agent.agent.Agent") as mock_agent_class:
         mock_agent_instance = Mock()
         mock_agent_class.return_value = mock_agent_instance
 

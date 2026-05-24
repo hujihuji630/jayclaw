@@ -1,11 +1,14 @@
 """Advanced TUI components."""
 
+import logging
 from pathlib import Path
 
 from prompt_toolkit import prompt as pt_prompt
 from prompt_toolkit.completion import Completer, Completion
 from rich.console import Console
 from rich.table import Table
+
+logger = logging.getLogger(__name__)
 
 # Directories to skip during file completion
 _IGNORE_DIRS = {
@@ -99,7 +102,7 @@ class FileCompleter(Completer):
                             display=display,
                         )
         except Exception:
-            pass
+            logger.debug("file completion enumeration failed", exc_info=True)
 
 
 class PyCodeCompleter(Completer):

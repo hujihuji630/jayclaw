@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,8 @@ from ..platform import MessagePlatform
 
 if TYPE_CHECKING:
     import lark_oapi as lark
+
+logger = logging.getLogger(__name__)
 
 
 class FeishuAdapter(MessagePlatform):
@@ -553,4 +556,4 @@ class FeishuAdapter(MessagePlatform):
                 loop = asyncio.get_event_loop()
                 loop.run_until_complete(self._ws_client._disconnect())
             except Exception:
-                pass
+                logger.exception("Feishu WS disconnect failed during shutdown")

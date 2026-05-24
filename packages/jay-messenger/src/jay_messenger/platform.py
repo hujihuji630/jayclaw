@@ -1,7 +1,7 @@
 """Platform adapter base class.
 
 DEPRECATED: This module is kept for backward compatibility.
-Use pig_messenger.base.BaseMessengerAdapter instead.
+Use jay_messenger.base.BaseMessengerAdapter instead.
 """
 
 import warnings
@@ -13,7 +13,7 @@ from typing import Any
 from .message import Attachment, UniversalMessage
 
 warnings.warn(
-    "pig_messenger.platform is deprecated. Use pig_messenger.base instead.",
+    "jay_messenger.platform is deprecated. Use jay_messenger.base instead.",
     DeprecationWarning,
     stacklevel=2,
 )
