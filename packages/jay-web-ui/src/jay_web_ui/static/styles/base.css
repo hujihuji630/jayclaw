@@ -1,0 +1,100 @@
+/* @font-face — self-hosted, font-display: swap */
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/static/fonts/Fraunces-Variable.woff2') format('woff2-variations'),
+       url('/static/fonts/Fraunces-Variable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/static/fonts/Inter-Variable.woff2') format('woff2-variations'),
+       url('/static/fonts/Inter-Variable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/static/fonts/JetBrainsMono-Variable.woff2') format('woff2-variations'),
+       url('/static/fonts/JetBrainsMono-Variable.woff2') format('woff2');
+}
+
+/* Reset */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.65;
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Headings — Fraunces display */
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+h1 { font-size: 2.75rem; line-height: 1.15; font-variation-settings: 'SOFT' 100, 'opsz' 144; }
+h2 { font-size: 1.5rem; line-height: 1.3; }
+h3 { font-size: 1.25rem; line-height: 1.35; }
+
+/* Links */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid currentColor;
+  transition: opacity var(--motion-fast) var(--easing);
+}
+a:hover { opacity: 0.7; }
+
+/* Code (inline + block defaults — block overridden in chat.css/highlight.css) */
+code, pre, kbd {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+}
+code {
+  background: var(--bg-code);
+  padding: 0.05em 0.4em;
+  border-radius: var(--radius-sm);
+  font-size: 0.9em;
+}
+pre {
+  background: var(--bg-code);
+  padding: 1em 1.25em;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+pre code { background: none; padding: 0; }
+
+kbd {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 0.15em 0.5em;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  color: var(--text-secondary);
+}
+
+/* Selection */
+::selection { background: var(--accent-soft); color: var(--text-primary); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg-page); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
