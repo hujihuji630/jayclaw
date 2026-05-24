@@ -35,6 +35,18 @@ class ChatApp {
         this._paletteSelected = 0;
         this._paletteCurrentItems = [];
         this._paletteFlat = [];
+        this.slashPopover = document.getElementById('slashPopover');
+        this._slashItems = [];
+        this._slashSelected = 0;
+        this._slashCommands = [
+            { cmd: '/compact', desc: '压缩上下文', run: () => this.doCompact() },
+            { cmd: '/handoff', desc: '生成 Handoff', run: () => this.doHandoff() },
+            { cmd: '/fork', desc: 'Fork 会话', run: () => this.showForkModal() },
+            { cmd: '/clear', desc: '清屏', run: () => this.clearView() },
+            { cmd: '/new', desc: '新对话', run: () => this.newChat() },
+            { cmd: '/export', desc: '导出 Markdown', run: () => this.exportMarkdown() },
+            { cmd: '/help', desc: '快捷键帮助', run: () => this.openHelp() },
+        ];
 
         this.init();
     }
@@ -46,6 +58,13 @@ class ChatApp {
         // Send
         this.sendBtn.addEventListener('click', () => this.handleSendOrCancel());
         this.messageInput.addEventListener('keydown', (e) => {
+            const slashOpen = this.slashPopover?.classList.contains('active');
+            if (slashOpen) {
+                if (e.key === 'ArrowDown') { e.preventDefault(); this._moveSlash(1); return; }
+                if (e.key === 'ArrowUp') { e.preventDefault(); this._moveSlash(-1); return; }
+                if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); this._executeSlash(); return; }
+                if (e.key === 'Escape') { this._closeSlash(); return; }
+            }
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.handleSendOrCancel(); }
         });
         this.messageInput.addEventListener('input', () => {
@@ -53,6 +72,7 @@ class ChatApp {
             this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 160) + 'px';
             if (this.charCount) this.charCount.textContent = this.messageInput.value.length;
             this._updateSendBtn();
+            this._maybeOpenSlash();
         });
 
         // File upload
@@ -2147,6 +2167,54 @@ def my_tool(arg: str) -> str:
         const startIdx = curIdx >= 0 ? curIdx : (delta < 0 ? userMsgs.length : -1);
         const next = Math.max(0, Math.min(userMsgs.length - 1, startIdx + delta));
         userMsgs[next].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // ── D7: slash commands ─────────────────────────────────────────
+    _maybeOpenSlash() {
+        if (!this.slashPopover) return;
+        const val = this.messageInput.value;
+        if (val.startsWith('/') && !val.includes('\n')) {
+            const q = val.toLowerCase();
+            this._slashItems = this._slashCommands.filter((c) => c.cmd.startsWith(q));
+            if (this._slashItems.length === 0) { this._closeSlash(); return; }
+            this._slashSelected = 0;
+            this._renderSlash();
+            this.slashPopover.classList.add('active');
+        } else {
+            this._closeSlash();
+        }
+    }
+    _renderSlash() {
+        if (!this.slashPopover) return;
+        this.slashPopover.innerHTML = this._slashItems.map((it, i) => `
+            <div class="slash-item" data-idx="${i}" aria-selected="${i === this._slashSelected}">
+                <span class="slash-item-cmd">${it.cmd}</span>
+                <span class="slash-item-desc">${it.desc}</span>
+            </div>
+        `).join('');
+        this.slashPopover.querySelectorAll('.slash-item').forEach((el) => {
+            el.addEventListener('mouseenter', () => { this._slashSelected = +el.dataset.idx; this._renderSlash(); });
+            el.addEventListener('click', () => this._executeSlash());
+        });
+    }
+    _moveSlash(delta) {
+        const max = this._slashItems.length - 1;
+        if (max < 0) return;
+        this._slashSelected = (this._slashSelected + delta + max + 1) % (max + 1);
+        this._renderSlash();
+    }
+    _executeSlash() {
+        const item = this._slashItems[this._slashSelected];
+        if (!item) return;
+        // Clear input + close popover BEFORE running, so /clear etc. don't see leftover text.
+        this.messageInput.value = '';
+        this.messageInput.dispatchEvent(new Event('input'));
+        this._closeSlash();
+        try { item.run(); } catch (e) { console.error('slash run failed', e); }
+    }
+    _closeSlash() {
+        this.slashPopover?.classList.remove('active');
+        this._slashItems = [];
     }
 }
 

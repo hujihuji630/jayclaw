@@ -51,3 +51,29 @@
   padding: 1px 6px; border-radius: 3px;
 }
 .palette-empty { padding: 24px; text-align: center; color: var(--text-tertiary); font-size: 0.875rem; }
+
+/* Slash command popover (D7) — positioned above the input wrapper */
+.input-wrapper { position: relative; }
+.slash-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0; right: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+  max-height: 220px;
+  overflow-y: auto;
+  display: none;
+  z-index: 50;
+}
+.slash-popover.active { display: block; }
+.slash-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.slash-item[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
+.slash-item-cmd { font-family: var(--font-mono); color: var(--accent); }
+.slash-item-desc { color: var(--text-secondary); font-size: 0.8125rem; margin-left: auto; }
