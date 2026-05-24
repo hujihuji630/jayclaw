@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from jay_web_ui.models import ChatMessage
 
@@ -173,3 +173,47 @@ def register(server) -> None:
             return {"status": "ok"}
         except OSError as e:
             return {"status": "error", "error": str(e)}
+
+    @server.app.get("/api/sessions/{session_id}/export.md")
+    async def export_session_md(session_id: str):
+        """Export the current chat session as a Markdown download."""
+        from datetime import datetime
+
+        from fastapi.responses import Response
+
+        if session_id != "current":
+            # v1.1 only supports in-memory current session export.
+            raise HTTPException(status_code=404, detail=f"session not found: {session_id}")
+
+        messages = [
+            {"role": m.role, "content": m.content}
+            for m in server.history
+            if m.role in ("user", "assistant")
+        ]
+
+        lines = [
+            "# JayClaw chat export",
+            f"_{datetime.now().isoformat(timespec='seconds')}_",
+            "",
+        ]
+        for m in messages:
+            heading = "你" if m["role"] == "user" else "JayClaw"
+            lines.append(f"## {heading}")
+            lines.append("")
+            lines.append(m["content"])
+            lines.append("")
+
+        body = "\n".join(lines)
+        name = "chat"
+        if server.agent and hasattr(server.agent, "session"):
+            try:
+                name = server.agent.session.name or "chat"
+            except Exception:
+                pass
+        date_part = datetime.now().strftime("%Y%m%d")
+        filename = f"chat-{name}-{date_part}.md"
+        return Response(
+            content=body,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )

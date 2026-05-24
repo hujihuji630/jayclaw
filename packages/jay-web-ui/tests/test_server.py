@@ -175,3 +175,33 @@ def test_truncate_missing_body_returns_422(server_with_history):
     client, _ = server_with_history
     r = client.post('/api/messages/truncate', json={})
     assert r.status_code == 422
+
+
+def test_export_md_returns_markdown(server_with_history):
+    """Export endpoint returns text/markdown with attachment disposition + alternating turns."""
+    client, _ = server_with_history
+    r = client.get('/api/sessions/current/export.md')
+    assert r.status_code == 200
+    assert 'text/markdown' in r.headers['content-type']
+    cd = r.headers.get('content-disposition', '')
+    assert 'attachment' in cd
+    assert '.md' in cd
+    body = r.text
+    # Has at least the user + assistant turn markers (Chinese headings).
+    assert '## 你' in body
+    assert '## JayClaw' in body
+
+
+def test_export_md_skips_system_role(server_with_history):
+    """System / non-conversational roles should not bleed into the export."""
+    client, server = server_with_history
+    from jay_web_ui.models import ChatMessage
+    server.history.append(ChatMessage(role='system', content='SECRET'))
+    r = client.get('/api/sessions/current/export.md')
+    assert 'SECRET' not in r.text
+
+
+def test_export_md_unknown_session_returns_404(server_with_history):
+    client, _ = server_with_history
+    r = client.get('/api/sessions/some-other-id/export.md')
+    assert r.status_code == 404
