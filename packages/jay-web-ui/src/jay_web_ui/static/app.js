@@ -930,6 +930,9 @@ def my_tool(arg: str) -> str:
                 }
             }
 
+            // Streaming finished — flush throttled render and finalize (highlight + copy buttons).
+            if (assistantMsg) this.finalizeMessage(assistantMsg);
+
             if (fullContent && !cancelled) this.messageHistory.push({ role: 'assistant', content: fullContent });
         } catch (e) {
             this.setMessageError(assistantMsg, `请求失败: ${e.message}`);
@@ -1009,38 +1012,86 @@ def my_tool(arg: str) -> str:
     }
 
     renderContent(container, text) {
-        const escaped = text
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        // Configure marked once (idempotent).
+        if (!window._markedConfigured) {
+            window.marked.setOptions({
+                gfm: true,
+                breaks: false,
+                headerIds: false,
+                mangle: false,
+            });
+            window._markedConfigured = true;
+        }
 
-        // Markdown 渲染
-        let html = escaped
-            // 代码块
-            .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>')
-            // 行内代码
-            .replace(/`([^`]+)`/g, '<code>$1</code>')
-            // 标题
-            .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-            .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-            .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-            // 粗体
-            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-            // 斜体
-            .replace(/\*(.+?)\*/g, '<em>$1</em>')
-            // 无序列表
-            .replace(/^\- (.+)$/gm, '<li>$1</li>')
-            .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-            // 有序列表
-            .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
-            // 链接 — 只允许 http(s) / mailto，避免 javascript: 等协议注入
-            .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, url) => {
-                const safe = /^(https?:|mailto:|\/|#)/i.test(url.trim()) ? url : '#';
-                return `<a href="${safe}" target="_blank" rel="noopener noreferrer">${label}</a>`;
-            })
-            // 换行
-            .replace(/\n\n/g, '</p><p>')
-            .replace(/\n/g, '<br>');
+        const rawHtml = window.marked.parse(text || '');
+        const safeHtml = window.DOMPurify.sanitize(rawHtml, {
+            ALLOWED_ATTR: ['href', 'title', 'class', 'target', 'rel', 'colspan', 'rowspan', 'align'],
+            ADD_ATTR: ['target', 'rel'],
+            FORBID_TAGS: ['script', 'style', 'iframe', 'object'],
+        });
+        container.innerHTML = safeHtml;
 
-        container.innerHTML = `<p>${html}</p>`;
+        // External links open in new tab safely.
+        container.querySelectorAll('a[href]').forEach((a) => {
+            const href = a.getAttribute('href') || '';
+            if (/^https?:/i.test(href)) {
+                a.setAttribute('target', '_blank');
+                a.setAttribute('rel', 'noopener noreferrer');
+            }
+        });
+    }
+
+    finalizeMessageRender(container) {
+        // Final-pass: highlight code blocks and install copy buttons.
+        // Called once per message after stream ends.
+        container.querySelectorAll('pre > code').forEach((codeEl) => {
+            // Wrap in chrome
+            const pre = codeEl.parentElement;
+            if (pre.parentElement?.classList.contains('code-block')) return;
+            const wrapper = document.createElement('div');
+            wrapper.className = 'code-block';
+            const lang = (codeEl.className.match(/language-(\w+)/) || [, 'text'])[1];
+            wrapper.innerHTML = `
+                <div class="code-block-header">
+                    <span class="code-block-lang">${lang}</span>
+                    <button class="code-block-copy" type="button" aria-label="Copy">
+                        <span class="copy-label">Copy</span>
+                    </button>
+                </div>
+            `;
+            pre.parentElement.insertBefore(wrapper, pre);
+            wrapper.appendChild(pre);
+
+            // Highlight
+            try { window.hljs.highlightElement(codeEl); }
+            catch (e) { /* unknown language — leave plain */ }
+
+            // Collapse if > 20 lines
+            const lineCount = (codeEl.textContent || '').split('\n').length;
+            if (lineCount > 20) {
+                wrapper.classList.add('collapsed');
+                const expand = document.createElement('button');
+                expand.className = 'code-block-expand';
+                expand.type = 'button';
+                expand.textContent = `Expand ${lineCount - 20} more lines`;
+                expand.addEventListener('click', () => wrapper.classList.remove('collapsed'));
+                wrapper.appendChild(expand);
+            }
+
+            // Copy button
+            wrapper.querySelector('.code-block-copy').addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(codeEl.textContent || '');
+                    const btn = wrapper.querySelector('.code-block-copy');
+                    btn.classList.add('copied');
+                    btn.querySelector('.copy-label').textContent = '✓ Copied';
+                    setTimeout(() => {
+                        btn.classList.remove('copied');
+                        btn.querySelector('.copy-label').textContent = 'Copy';
+                    }, 1500);
+                } catch (_) { /* clipboard denied */ }
+            });
+        });
     }
 
     appendToMessage(messageDiv, text) {
@@ -1048,8 +1099,29 @@ def my_tool(arg: str) -> str:
         contentDiv.querySelector('.typing-indicator')?.remove();
         if (!contentDiv.dataset.content) contentDiv.dataset.content = '';
         contentDiv.dataset.content += text;
-        this.renderContent(contentDiv, contentDiv.dataset.content);
-        this.scrollToBottom();
+
+        // Throttle rerenders to ~200ms during streaming — avoids per-token reparses.
+        if (!messageDiv._renderScheduled) {
+            messageDiv._renderScheduled = setTimeout(() => {
+                messageDiv._renderScheduled = null;
+                this.renderContent(contentDiv, contentDiv.dataset.content);
+                this.scrollToBottom();
+            }, 200);
+        }
+    }
+
+    finalizeMessage(messageDiv) {
+        // Called when streaming ends. Flushes any pending throttled render
+        // and runs the final highlight + copy-button pass.
+        if (messageDiv._renderScheduled) {
+            clearTimeout(messageDiv._renderScheduled);
+            messageDiv._renderScheduled = null;
+        }
+        const contentDiv = messageDiv.querySelector('.message-content');
+        if (contentDiv && contentDiv.dataset.content) {
+            this.renderContent(contentDiv, contentDiv.dataset.content);
+        }
+        if (contentDiv) this.finalizeMessageRender(contentDiv);
     }
 
     updateThinkingStatus(messageDiv, status) {
