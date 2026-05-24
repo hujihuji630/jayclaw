@@ -30,6 +30,7 @@ from .routes import (
     lifecycle as lifecycle_routes,
     llm as llm_routes,
     mcp as mcp_routes,
+    messages as messages_routes,
     sessions as sessions_routes,
     skills_tools as skills_tools_routes,
     workspace as workspace_routes,
@@ -158,6 +159,7 @@ class ChatServer:
         """
         llm_routes.register(self)
         lifecycle_routes.register(self)
+        messages_routes.register(self)
         files_routes.register(self)
         workspace_routes.register(self)
         sessions_routes.register(self)

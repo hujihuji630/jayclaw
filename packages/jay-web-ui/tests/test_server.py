@@ -146,3 +146,32 @@ def test_chat_message_explicit_id_round_trips():
     m = ChatMessage(id='my-custom-id', role='user', content='hi')
     assert m.id == 'my-custom-id'
     assert m.model_dump()['id'] == 'my-custom-id'
+
+
+def test_truncate_removes_after_id(server_with_history):
+    """Truncate keeps messages up to and including the named one; removes everything after."""
+    client, server = server_with_history
+    ids = [m.id for m in server.history]
+    assert len(ids) >= 4, 'fixture should have ≥4 messages'
+    target = ids[1]
+
+    r = client.post('/api/messages/truncate', json={'after_id': target})
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload['removed'] == len(ids) - 2  # m2, m3 gone
+
+    after = [m.id for m in server.history]
+    assert after == ids[:2]
+
+
+def test_truncate_unknown_id_returns_400(server_with_history):
+    client, _ = server_with_history
+    r = client.post('/api/messages/truncate', json={'after_id': 'does-not-exist'})
+    assert r.status_code == 400
+
+
+def test_truncate_missing_body_returns_422(server_with_history):
+    """Missing required body field should be a Pydantic validation error (422)."""
+    client, _ = server_with_history
+    r = client.post('/api/messages/truncate', json={})
+    assert r.status_code == 422
