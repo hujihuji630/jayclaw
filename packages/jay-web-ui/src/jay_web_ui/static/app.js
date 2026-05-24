@@ -161,6 +161,76 @@ class ChatApp {
             else if (e.key === 'Enter') { e.preventDefault(); this.executePaletteSelection(); }
         });
 
+        // Global shortcuts (D6)
+        document.getElementById('helpModalClose')?.addEventListener('click', () => {
+            document.getElementById('helpModal')?.classList.remove('active');
+        });
+        document.getElementById('helpModal')?.addEventListener('click', (e) => {
+            if (e.target.id === 'helpModal') e.target.classList.remove('active');
+        });
+        document.addEventListener('keydown', (e) => {
+            const meta = e.metaKey || e.ctrlKey;
+            const inTextField = ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName);
+
+            // Esc — close top-most surface (palette is handled in its own listener)
+            if (e.key === 'Escape') {
+                const helpModal = document.getElementById('helpModal');
+                if (helpModal?.classList.contains('active')) {
+                    helpModal.classList.remove('active');
+                    return;
+                }
+                if (this.paletteOverlay?.classList.contains('active')) {
+                    return; // palette has its own Esc handler
+                }
+                if (this.sidePanel?.classList.contains('active')) {
+                    this.closePanel();
+                    return;
+                }
+                if (this.modelDropdown?.classList.contains('active')) {
+                    this.closeModelDropdown();
+                    return;
+                }
+            }
+
+            // ⌘N — new chat
+            if (meta && e.key.toLowerCase() === 'n') {
+                e.preventDefault();
+                this.newChat();
+                return;
+            }
+            // ⌘L — clear view
+            if (meta && e.key.toLowerCase() === 'l') {
+                e.preventDefault();
+                this.clearView();
+                return;
+            }
+            // ⌘Enter — force send (only inside the message input)
+            if (meta && e.key === 'Enter' && document.activeElement === this.messageInput) {
+                e.preventDefault();
+                this.handleSendOrCancel();
+                return;
+            }
+            // ⌘/ — toggle help
+            if (meta && e.key === '/') {
+                e.preventDefault();
+                document.getElementById('helpModal')?.classList.toggle('active');
+                return;
+            }
+            // ? — help (when not typing in a text field)
+            if (e.key === '?' && !inTextField) {
+                e.preventDefault();
+                document.getElementById('helpModal')?.classList.add('active');
+                return;
+            }
+            // ⌘↑ / ⌘↓ — jump between user messages (skip inside the textarea so users can move the cursor)
+            if (meta && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+                if (inTextField && document.activeElement === this.messageInput) return;
+                e.preventDefault();
+                this._jumpUserMessage(e.key === 'ArrowUp' ? -1 : 1);
+                return;
+            }
+        });
+
         this.loadHistory();
     }
 
@@ -2064,6 +2134,19 @@ def my_tool(arg: str) -> str:
         // Spec treats Edit as Resend with cursor-at-end. The user can then modify
         // and press Enter to re-send.
         return this.resendMessage(messageDiv);
+    }
+
+    _jumpUserMessage(delta) {
+        const userMsgs = Array.from(this.chatContainer.querySelectorAll('.message.user'));
+        if (!userMsgs.length) return;
+        // Find the user message currently nearest the top of the viewport.
+        const curIdx = userMsgs.findIndex((el) => {
+            const rect = el.getBoundingClientRect();
+            return rect.top >= 80 && rect.top < window.innerHeight / 2;
+        });
+        const startIdx = curIdx >= 0 ? curIdx : (delta < 0 ? userMsgs.length : -1);
+        const next = Math.max(0, Math.min(userMsgs.length - 1, startIdx + delta));
+        userMsgs[next].scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 }
 
