@@ -7,15 +7,33 @@ from pathlib import Path
 from fastapi import Request
 
 
+def _workspace_path(server) -> Path:
+    """Get the workspace path from the agent."""
+    if server.agent:
+        if hasattr(server.agent, "workspace"):
+            return Path(server.agent.workspace)
+        inner = getattr(server.agent, "agent", None)
+        if inner and hasattr(inner, "workspace"):
+            return Path(inner.workspace)
+    return Path.cwd()
+
+
 def register(server) -> None:
     """Mount skill+tool endpoints onto ``server.app``."""
 
     @server.app.get("/api/skills")
     async def get_skills():
-        if server.agent and hasattr(server.agent, "skills"):
+        agent = server.agent
+        if not agent:
+            return {"skills": []}
+        core = agent.agent if hasattr(agent, "agent") else agent
+        mgr = getattr(core, "skill_manager", None)
+        if mgr is None:
+            mgr = getattr(agent, "skill_manager", None)
+        if mgr is not None and hasattr(mgr, "list_skills"):
             skills = [
                 {"name": s.name, "description": getattr(s, "description", "")}
-                for s in (server.agent.skills or [])
+                for s in mgr.list_skills()
             ]
             return {"skills": skills}
         return {"skills": []}
@@ -46,7 +64,7 @@ def register(server) -> None:
 
     @server.app.post("/api/tools")
     async def add_tool(request: Request):
-        """动态添加工具（通过 Python 代码）"""
+        """动态添加工具（通过 Python 代码），持久化到 .jayclaw/tools/"""
         body = await request.json()
         code = body.get("code", "").strip()
         if not code:
@@ -99,6 +117,14 @@ def register(server) -> None:
             if not added_tools:
                 return {"status": "error", "error": "未找到有效的工具定义"}
 
+            # 持久化到 .jayclaw/tools/ 目录
+            workspace = _workspace_path(server)
+            tools_dir = workspace / ".jayclaw" / "tools"
+            tools_dir.mkdir(parents=True, exist_ok=True)
+            for tool_name in added_tools:
+                tool_file = tools_dir / f"{tool_name}.py"
+                tool_file.write_text(code, encoding="utf-8")
+
             return {"status": "ok", "tools": added_tools}
         except SyntaxError as e:
             return {"status": "error", "error": f"语法错误: {e}"}
@@ -107,7 +133,7 @@ def register(server) -> None:
 
     @server.app.post("/api/skills")
     async def add_skill(request: Request):
-        """动态添加 Skill（保存 SKILL.md）"""
+        """动态添加 Skill（保存 SKILL.md 到 .jayclaw/skills/）"""
         body = await request.json()
         name = body.get("name", "").strip()
         content = body.get("content", "").strip()
@@ -128,7 +154,8 @@ def register(server) -> None:
         try:
             from jay_agent_core.skills import Skill
 
-            skills_dir = Path.cwd() / ".claude" / "skills" / name
+            workspace = _workspace_path(server)
+            skills_dir = workspace / ".jayclaw" / "skills" / name
             skills_dir.mkdir(parents=True, exist_ok=True)
             skill_file = skills_dir / "SKILL.md"
             skill_file.write_text(content, encoding="utf-8")
@@ -138,11 +165,24 @@ def register(server) -> None:
             if not skill.title:
                 return {"status": "error", "error": "无法解析 Skill 标题"}
 
-            core_agent = (
-                server.agent.agent if hasattr(server.agent, "agent") else server.agent
-            )
-            if hasattr(core_agent, "skill_manager"):
-                core_agent.skill_manager.skills[name] = skill
+            agent = server.agent
+            core = agent.agent if hasattr(agent, "agent") else agent
+            mgr = getattr(core, "skill_manager", None)
+            if mgr is None:
+                mgr = getattr(agent, "skill_manager", None)
+            if mgr is not None:
+                mgr.skills[name] = skill
+            else:
+                return {"status": "error", "error": "Skill manager 未初始化"}
+
+            # Refresh agent system prompt so the LLM sees the new skill
+            if hasattr(agent, "_get_system_prompt"):
+                new_prompt = agent._get_system_prompt()
+                core.system_prompt = new_prompt
+                if core.history and core.history[0].role == "system":
+                    from jay_llm import Message
+
+                    core.history[0] = Message(role="system", content=new_prompt)
 
             return {"status": "ok", "skill": name, "path": str(skill_file)}
         except Exception as e:

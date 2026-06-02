@@ -82,7 +82,7 @@ class ContextManager:
         content_parts = []
         for file_path in files:
             try:
-                content = file_path.read_text()
+                content = file_path.read_text(encoding="utf-8")
                 content_parts.append(f"# From: {file_path}\n\n{content}")
             except Exception as e:
                 print(f"Warning: Failed to load {file_path}: {e}")
@@ -102,7 +102,7 @@ class ContextManager:
 
         # Use the most specific (last in list)
         try:
-            return files[-1].read_text()
+            return files[-1].read_text(encoding="utf-8")
         except Exception as e:
             print(f"Warning: Failed to load SYSTEM.md: {e}")
             return None
@@ -121,7 +121,7 @@ class ContextManager:
         content_parts = []
         for file_path in files:
             try:
-                content = file_path.read_text()
+                content = file_path.read_text(encoding="utf-8")
                 content_parts.append(content)
             except Exception as e:
                 print(f"Warning: Failed to load {file_path}: {e}")

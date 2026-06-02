@@ -7,6 +7,8 @@ These two endpoints are mounted by the registrar below but the heavy
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, StreamingResponse
 
@@ -59,12 +61,41 @@ def register(server) -> None:
 
                 if server.agent:
                     if hasattr(server.agent, "agent") and hasattr(server.agent.agent, "arun"):
-                        response = await server.agent.agent.arun(message)
+                        core_agent = server.agent.agent
                     elif hasattr(server.agent, "arun"):
-                        response = await server.agent.arun(message)
+                        core_agent = server.agent
                     else:
                         response = server.agent.run(message)
-                    content = response.content
+                        content = response.content
+                        await websocket.send_json({"type": "token", "content": content})
+                        core_agent = None
+
+                    if core_agent:
+                        token_queue: asyncio.Queue = asyncio.Queue()
+                        orig_token = getattr(core_agent, "on_token", None)
+                        core_agent.on_token = lambda t: token_queue.put_nowait(t)
+
+                        task = asyncio.create_task(core_agent.arun(message))
+                        content = ""
+                        try:
+                            while not task.done():
+                                while not token_queue.empty():
+                                    token = token_queue.get_nowait()
+                                    await websocket.send_json(
+                                        {"type": "token", "content": token}
+                                    )
+                                    content += token
+                                await asyncio.sleep(0.02)
+                            # Drain remaining
+                            while not token_queue.empty():
+                                token = token_queue.get_nowait()
+                                await websocket.send_json(
+                                    {"type": "token", "content": token}
+                                )
+                                content += token
+                            task.result()
+                        finally:
+                            core_agent.on_token = orig_token
                 elif server.llm:
                     if hasattr(server.llm, "stream"):
                         full_content = ""

@@ -178,7 +178,7 @@ def register(server) -> None:
                         server.history.append(msg)
                         server._record_to_session(msg.role, msg.content)
                     retained_messages = [
-                        {"role": m.role, "content": m.content} for m in retained
+                        {"id": m.id, "role": m.role, "content": m.content} for m in retained
                     ]
                     result_parts.append("已开启新对话")
                 else:

@@ -32,6 +32,7 @@ class Agent:
         max_iterations: int = 10,
         on_tool_start: Callable | None = None,
         on_tool_end: Callable | None = None,
+        on_token: Callable[[str], None] | None = None,
         verbose: bool = False,
         # Enhanced subsystem parameters
         profile_manager: ProfileManager | None = None,
@@ -70,6 +71,7 @@ class Agent:
         self.max_rounds_with_plan = max_rounds_with_plan
         self.on_tool_start = on_tool_start
         self.on_tool_end = on_tool_end
+        self.on_token = on_token
         self.verbose = verbose
 
         # Enhanced subsystems
@@ -233,6 +235,8 @@ class Agent:
                 ):
                     if chunk.content:
                         response_content += chunk.content
+                        if self.on_token:
+                            self.on_token(chunk.content)
                     if hasattr(chunk, "tool_calls") and chunk.tool_calls:
                         response_tool_calls = chunk.tool_calls
 

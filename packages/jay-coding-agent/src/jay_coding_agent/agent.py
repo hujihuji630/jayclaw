@@ -123,7 +123,7 @@ class CodingAgent:
         self.skill_manager = None
         if enable_skills:
             self.skill_manager = SkillManager()
-            self.skill_manager.discover_skills([])
+            self.skill_manager.discover_skills([self.workspace / ".jayclaw" / "skills"])
             if len(self.skill_manager) > 0:
                 print(f"✓ Loaded {len(self.skill_manager)} skills")
 
@@ -187,11 +187,17 @@ class CodingAgent:
             pass
 
         # Register file/code/shell Tool objects into registry_enhanced
+        from .linting import lint_and_fix as _lint_and_fix
+
         def make_handler(t):
             async def _handler(args, user_id=None, meta=None, cancel=None):
                 from jay_agent_core.tools.base import ToolResult
                 try:
                     result = await t.aexecute(**args)
+                    if t.name == "write_file" and args.get("path", "").endswith(".py"):
+                        lint_output = _lint_and_fix((self.workspace / args["path"]).resolve())
+                        if lint_output:
+                            result = f"{result}\n\n--- LINT ---\n{lint_output}"
                     return ToolResult(ok=True, data=result)
                 except Exception as e:
                     return ToolResult(ok=False, error=str(e))
@@ -206,6 +212,47 @@ class CodingAgent:
                 timeout=60.0,
             )
 
+        # Register lint_file tool
+        async def _lint_file_handler(args, user_id=None, meta=None, cancel=None):
+            from jay_agent_core.tools.base import ToolResult
+            from .linting import lint_and_fix, run_linters, format_findings
+            path = args.get("path", "")
+            file_path = (self.workspace / path).resolve()
+            if not str(file_path).startswith(str(self.workspace.resolve())):
+                return ToolResult(ok=False, error="Path outside workspace")
+            if not file_path.exists():
+                return ToolResult(ok=False, error=f"File not found: {path}")
+            if args.get("autofix", True):
+                output = lint_and_fix(file_path)
+            else:
+                source = file_path.read_text(encoding="utf-8")
+                findings = run_linters(file_path, source)
+                output = format_findings(findings, []) if findings else None
+            return ToolResult(ok=True, data=output or "No lint issues found.")
+
+        self.agent.registry_enhanced.register(
+            name="lint_file",
+            handler=_lint_file_handler,
+            schema={
+                "type": "function",
+                "function": {
+                    "name": "lint_file",
+                    "description": "Run JayClaw linters on a Python file. Reports issues and auto-fixes where possible.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "File path relative to workspace"},
+                            "autofix": {"type": "boolean", "description": "Apply available autofixes (default: true)"},
+                        },
+                        "required": ["path"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            is_core=True,
+            timeout=30.0,
+        )
+
         # Register delegate tool with LLM and read-only tools injected
         self._register_delegate_tool(tools)
 
@@ -213,6 +260,9 @@ class CodingAgent:
         from jay_agent_core.mcp import MCPManager
         self.mcp_manager = MCPManager(self.workspace)
         self._init_mcp_sync()
+
+        # Load persisted custom tools from .jayclaw/tools/
+        self._load_persisted_tools()
 
         # Initialize extension manager
         self.extension_manager = None
@@ -247,6 +297,45 @@ class CodingAgent:
         for path in ext_paths:
             if path.exists():
                 self.extension_manager.load_from_directory(path)
+
+    def _load_persisted_tools(self):
+        """Load custom tools persisted in .jayclaw/tools/*.py at startup."""
+        tools_dir = self.workspace / ".jayclaw" / "tools"
+        if not tools_dir.is_dir():
+            return
+        from jay_agent_core.tools import tool
+        from jay_agent_core.tools.base import ToolResult
+
+        loaded = []
+        for tool_file in sorted(tools_dir.glob("*.py")):
+            try:
+                code = tool_file.read_text(encoding="utf-8")
+                namespace = {"tool": tool}
+                exec(code, namespace)
+                for obj in namespace.values():
+                    if hasattr(obj, "__class__") and obj.__class__.__name__ == "Tool":
+                        self.agent.add_tool(obj)
+                        if hasattr(self.agent, "registry_enhanced"):
+                            def make_handler(t):
+                                async def _handler(args, user_id=None, meta=None, cancel=None):
+                                    try:
+                                        result = await t.aexecute(**args)
+                                        return ToolResult(ok=True, data=result)
+                                    except Exception as e:
+                                        return ToolResult(ok=False, error=str(e))
+                                return _handler
+                            self.agent.registry_enhanced.register(
+                                name=obj.name,
+                                handler=make_handler(obj),
+                                schema=obj.to_openai_schema(),
+                                is_core=True,
+                                timeout=60.0,
+                            )
+                        loaded.append(obj.name)
+            except Exception:
+                continue
+        if loaded and self.verbose:
+            print(f"✓ Loaded {len(loaded)} persisted tools from .jayclaw/tools/")
 
     def _init_mcp_sync(self):
         """Load MCP config and start servers synchronously."""
@@ -541,6 +630,16 @@ class CodingAgent:
             self.file_ref_parser = FileReferenceParser(self.workspace)
         except Exception:
             logger.exception("file_ref_parser rebind failed after workspace switch")
+
+        # Re-discover skills from new workspace
+        if self.skill_manager:
+            self.skill_manager.skills.clear()
+            self.skill_manager.discover_skills([self.workspace / ".jayclaw" / "skills"])
+
+        # Update MCP manager workspace — stop old servers, reload from new workspace
+        if self.mcp_manager:
+            self.mcp_manager._workspace = self.workspace
+            self.mcp_manager._servers.clear()
 
         return str(self.workspace)
 
@@ -1429,7 +1528,7 @@ Project: .jayclaw/config.json
         if self.skill_manager:
             old_count = len(self.skill_manager)
             self.skill_manager.skills.clear()
-            self.skill_manager.discover_skills([])
+            self.skill_manager.discover_skills([self.workspace / ".jayclaw" / "skills"])
             new_count = len(self.skill_manager)
             reloaded.append(f"Skills: {new_count} (was {old_count})")
 

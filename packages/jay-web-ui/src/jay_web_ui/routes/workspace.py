@@ -48,6 +48,16 @@ def register(server) -> None:
                 resolved = server.agent.change_workspace(str(checked))
             else:
                 return {"status": "error", "error": "Agent does not support workspace change"}
+
+            # Reload MCP servers from new workspace
+            if hasattr(server.agent, "mcp_manager") and server.agent.mcp_manager:
+                mgr = server.agent.mcp_manager
+                await mgr.shutdown()
+                await mgr.load_and_start()
+                core = server.agent.agent if hasattr(server.agent, "agent") else server.agent
+                if hasattr(core, "registry_enhanced"):
+                    mgr.register_tools(core.registry_enhanced)
+
             return {"status": "ok", "workspace": resolved}
         except ValueError as e:
             return {"status": "error", "error": str(e)}

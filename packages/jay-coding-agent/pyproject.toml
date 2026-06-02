@@ -16,6 +16,7 @@ authors = [
 dependencies = [
     "jay-llm>=0.0.1",
     "jay-agent-core>=0.0.4",
+    "jay-agent-tools>=0.0.1",
     "jay-tui>=0.0.1",
     "typer>=0.12.0",
     "rich>=13.7.0",

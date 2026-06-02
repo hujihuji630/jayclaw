@@ -41,6 +41,8 @@ class ChatApp {
         this._slashCommands = [
             { cmd: '/compact', desc: '压缩上下文', run: () => this.doCompact() },
             { cmd: '/handoff', desc: '生成 Handoff', run: () => this.doHandoff() },
+            { cmd: '/agents-init', desc: '生成 AGENTS.md', run: () => this.showAgentsInitModal() },
+            { cmd: '/agents-summarize', desc: '提取教训到 AGENTS.md', run: () => this.doAgentsSummarize() },
             { cmd: '/fork', desc: 'Fork 会话', run: () => this.showForkModal() },
             { cmd: '/clear', desc: '清屏', run: () => this.clearView() },
             { cmd: '/new', desc: '新对话', run: () => this.newChat() },
@@ -48,12 +50,25 @@ class ChatApp {
             { cmd: '/help', desc: '快捷键帮助', run: () => this.openHelp() },
         ];
 
+        this._agentsMdExists = false;
+        this._summarizedThisSession = false;
+
         this.init();
     }
 
     init() {
         // Show workspace selector on startup
         this.initWorkspaceModal();
+
+        // Warn before closing tab if AGENTS.md summarize is pending
+        window.addEventListener('beforeunload', (e) => {
+            if (this._summarizedThisSession) return;
+            const userTurns = this.messageHistory.filter(m => m.role === 'user').length;
+            if (userTurns < 2) return;
+            if (this._agentsMdExists) {
+                e.preventDefault();
+            }
+        });
 
         // Send
         this.sendBtn.addEventListener('click', () => this.handleSendOrCancel());
@@ -101,6 +116,7 @@ class ChatApp {
         });
 
         // Sidebar panel buttons
+        document.getElementById('workspaceBtn')?.addEventListener('click', () => this.openWorkspaceModal());
         document.getElementById('filesBtn')?.addEventListener('click', () => this.openPanel('files'));
         document.getElementById('skillsBtn')?.addEventListener('click', () => this.openPanel('skills'));
         document.getElementById('toolsBtn')?.addEventListener('click', () => this.openPanel('tools'));
@@ -263,17 +279,21 @@ class ChatApp {
     }
 
     // ── New Chat ───────────────────────────────────────────────────
+    async _shouldPromptSummarize() {
+        if (this.messageHistory.length === 0) return false;
+        const userTurns = this.messageHistory.filter(m => m.role === 'user').length;
+        if (userTurns < 2) return false;
+        const status = await this._fetchAgentsMdStatus();
+        if (status && status.exists) { this._agentsMdExists = true; return true; }
+        return false;
+    }
+
     async newChat() {
         if (this.messageHistory.length === 0) return;
 
-        // Offer to summarize this session into AGENTS.md before clearing.
-        // Only if AGENTS.md exists in the workspace AND the session has real content (>= 2 user turns).
-        const userTurns = this.messageHistory.filter(m => m.role === 'user').length;
-        const status = await this._fetchAgentsMdStatus();
-        if (status && status.exists && userTurns >= 2) {
-            // Show modal; the user decides: analyze + write, or skip
+        if (await this._shouldPromptSummarize()) {
             const proceed = await this.showAgentsSummaryModal();
-            if (proceed === 'cancel') return;  // user backed out entirely
+            if (proceed === 'cancel') return;
         }
 
         // Save current conversation as a session before clearing
@@ -281,6 +301,7 @@ class ChatApp {
         await this.clearHistory(false);
         this.setSessionTitle('New Chat');
         this.sessionTitle = 'New Chat';
+        this._summarizedThisSession = false;
     }
 
     // ── Welcome ────────────────────────────────────────────────────
@@ -992,7 +1013,8 @@ def my_tool(arg: str) -> str:
         }
 
         this.hideWelcome();
-        this.addMessage('user', displayMessage);
+        const userMsgEl = this.addMessage('user', displayMessage);
+        this._currentUserMsg = userMsgEl;
         this.messageHistory.push({ role: 'user', content: displayMessage });
 
         this.messageInput.value = '';
@@ -1014,6 +1036,7 @@ def my_tool(arg: str) -> str:
 
         let assistantMsg = this.addMessage('assistant', '', true);
         this._currentAssistantMsg = assistantMsg;
+        let cancelled = false;
 
         try {
             const response = await fetch('/api/chat', {
@@ -1028,7 +1051,6 @@ def my_tool(arg: str) -> str:
             const decoder = new TextDecoder();
             let buffer = '';
             let fullContent = '';
-            let cancelled = false;
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -1072,7 +1094,11 @@ def my_tool(arg: str) -> str:
                             this.appendToMessage(assistantMsg, data.content);
                         } else if (data.type === 'message_start' && data.id) {
                             // Tag the DOM node with the message id (D3 needs this for truncate/edit).
-                            if (this._currentAssistantMsg) {
+                            if (data.role === 'user') {
+                                if (this._currentUserMsg) {
+                                    this._currentUserMsg.dataset.messageId = data.id;
+                                }
+                            } else if (this._currentAssistantMsg) {
                                 this._currentAssistantMsg.dataset.messageId = data.id;
                             }
                         } else if (data.type === 'message_end' && data.id) {
@@ -1102,8 +1128,15 @@ def my_tool(arg: str) -> str:
             this._updateContextMeter();
             // Clear streaming status indicator
             if (assistantMsg) {
-                const stepCur = assistantMsg.querySelector('.step-current');
+                const stepLog = assistantMsg.querySelector('.step-log');
+                const stepCur = stepLog?.querySelector('.step-current');
                 if (stepCur) stepCur.remove();
+                if (stepLog && !cancelled) {
+                    const done = document.createElement('div');
+                    done.className = 'step-done step-done-final';
+                    done.textContent = '✓ 思考完成';
+                    stepLog.appendChild(done);
+                }
                 // Add fork button to completed assistant message
                 const meta = assistantMsg.querySelector('.message-meta');
                 if (meta && !meta.querySelector('.msg-fork-btn')) {
@@ -1406,7 +1439,8 @@ def my_tool(arg: str) -> str:
                 this.hideWelcome();
                 for (const msg of messages) {
                     if (msg.role !== 'system') {
-                        this.addMessage(msg.role, msg.content);
+                        const el = this.addMessage(msg.role, msg.content);
+                        if (el && msg.id) el.dataset.messageId = msg.id;
                         this.messageHistory.push(msg);
                     }
                 }
@@ -1512,13 +1546,29 @@ def my_tool(arg: str) -> str:
             .then(data => {
                 if (data.workspace) {
                     input.value = data.workspace;
-                    modal.classList.add('hidden');
-                    this.maybeShowAgentsInitModal();
+                    input.select();
                 }
             })
             .catch(() => {});
 
         input.focus();
+    }
+
+    openWorkspaceModal() {
+        const modal = document.getElementById('workspaceModal');
+        const input = document.getElementById('workspaceInput');
+        const errorEl = document.getElementById('workspaceError');
+        const confirmBtn = document.getElementById('workspaceConfirm');
+        if (!modal || !input) return;
+        if (errorEl) errorEl.textContent = '';
+        if (confirmBtn) confirmBtn.disabled = false;
+        fetch('/api/workspace')
+            .then(r => r.json())
+            .then(data => { if (data.workspace) input.value = data.workspace; })
+            .catch(() => {});
+        modal.classList.remove('hidden');
+        input.focus();
+        input.select();
     }
 
 
@@ -1541,12 +1591,19 @@ def my_tool(arg: str) -> str:
     }
 
     // ── Session Load ────────────────────────────────────────────
-    loadSession(path) {
-        fetch('/api/sessions/load', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path }),
-        }).then(r => r.json()).then(data => {
+    async loadSession(path) {
+        if (await this._shouldPromptSummarize()) {
+            const verdict = await this.showAgentsSummaryModal();
+            if (verdict === 'cancel') return;
+        }
+
+        try {
+            const r = await fetch('/api/sessions/load', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path }),
+            });
+            const data = await r.json();
             if (data.status !== 'ok') { this.showToast(data.error || '加载失败', 'error'); return; }
             this.messageHistory = data.messages || [];
             // Re-render chat
@@ -1554,7 +1611,8 @@ def my_tool(arg: str) -> str:
             msgs.forEach(m => m.remove());
             this.hideWelcome();
             for (const m of this.messageHistory) {
-                this.addMessage(m.role, m.content);
+                const el = this.addMessage(m.role, m.content);
+                if (el && m.id) el.dataset.messageId = m.id;
             }
             // Update session title from first user message
             const firstUser = this.messageHistory.find(m => m.role === 'user');
@@ -1565,7 +1623,7 @@ def my_tool(arg: str) -> str:
             }
             this.closePanel();
             this.showToast('会话已加载', 'success');
-        }).catch(() => this.showToast('加载失败', 'error'));
+        } catch { this.showToast('加载失败', 'error'); }
     }
 
     // ── Fork ──────────────────────────────────────────────────────
@@ -1598,7 +1656,8 @@ def my_tool(arg: str) -> str:
                     this.hideWelcome();
                     for (const msg of retained) {
                         if (msg.role !== 'system') {
-                            this.addMessage(msg.role, msg.content);
+                            const el = this.addMessage(msg.role, msg.content);
+                            if (el && msg.id) el.dataset.messageId = msg.id;
                             this.messageHistory.push(msg);
                         }
                     }
@@ -1652,10 +1711,26 @@ def my_tool(arg: str) -> str:
     }
 
     // ── AGENTS.md (init + session-end summarize) ──────────────────
+    async doAgentsSummarize() {
+        const status = await this._fetchAgentsMdStatus();
+        if (!status || !status.exists) {
+            this.showToast('AGENTS.md 不存在，请先执行 /agents-init', 'error');
+            return;
+        }
+        const userTurns = this.messageHistory.filter(m => m.role === 'user').length;
+        if (userTurns < 2) {
+            this.showToast('对话内容不足（至少需要 2 轮），无法提取教训', 'error');
+            return;
+        }
+        await this.showAgentsSummaryModal();
+    }
+
     async _fetchAgentsMdStatus() {
         try {
             const resp = await fetch('/api/agents-md/status');
-            return await resp.json();
+            const data = await resp.json();
+            if (data && data.exists) this._agentsMdExists = true;
+            return data;
         } catch {
             return null;
         }
@@ -1910,6 +1985,7 @@ def my_tool(arg: str) -> str:
                         statusEl.className = 'agents-summary-status success';
                         statusEl.textContent = `已写入 ${data.relative_path}`;
                         this.showToast(`AGENTS.md 已更新: ${data.relative_path}`, 'success');
+                        this._summarizedThisSession = true;
                         setTimeout(() => close('proceed'), 600);
                     } else {
                         statusEl.className = 'agents-summary-status error';
@@ -1933,6 +2009,8 @@ def my_tool(arg: str) -> str:
             { id: 'new', label: '新建对话', icon: '✦', group: '命令', shortcut: '⌘N', run: () => this.newChat() },
             { id: 'compact', label: '压缩上下文', icon: '⊘', group: '命令', run: () => this.doCompact() },
             { id: 'handoff', label: '生成 Handoff', icon: '⇥', group: '命令', run: () => this.doHandoff() },
+            { id: 'agents-init', label: '生成 AGENTS.md', icon: '📋', group: '命令', run: () => this.showAgentsInitModal() },
+            { id: 'agents-summarize', label: '提取教训到 AGENTS.md', icon: '📝', group: '命令', run: () => this.doAgentsSummarize() },
             { id: 'fork', label: 'Fork 会话', icon: '⎇', group: '命令', run: () => this.showForkModal() },
             { id: 'export', label: '导出为 Markdown', icon: '📤', group: '命令', run: () => this.exportMarkdown() },
             { id: 'clear', label: '清屏', icon: '✕', group: '命令', shortcut: '⌘L', run: () => this.clearView() },
@@ -2109,14 +2187,15 @@ def my_tool(arg: str) -> str:
     }
 
     async resendMessage(messageDiv) {
-        const id = messageDiv.dataset.messageId;
+        return this._resendOrEdit(messageDiv, true);
+    }
+
+    async editMessage(messageDiv) {
+        return this._resendOrEdit(messageDiv, false);
+    }
+
+    async _resendOrEdit(messageDiv, autoSend) {
         const raw = messageDiv.dataset.raw || '';
-        if (!id) {
-            this.showToast('该消息没有 id，无法重发', 'error');
-            return;
-        }
-        // Truncate everything from this user message onward by truncating
-        // AFTER the previous message (so this user msg + everything after disappears).
         const allMessages = Array.from(this.chatContainer.querySelectorAll('.message'));
         const idx = allMessages.indexOf(messageDiv);
         const prev = idx > 0 ? allMessages[idx - 1] : null;
@@ -2131,7 +2210,6 @@ def my_tool(arg: str) -> str:
                 });
                 if (!r.ok) { this.showToast('截断失败', 'error'); return; }
             } else {
-                // No predecessor — clear all server history.
                 await fetch('/api/history', { method: 'DELETE' });
             }
         } catch (e) {
@@ -2139,21 +2217,22 @@ def my_tool(arg: str) -> str:
             return;
         }
 
-        // Remove DOM messages from idx onward (including the user message we're resending).
         for (let i = idx; i < allMessages.length; i++) allMessages[i].remove();
-
-        // Refill input with raw text and place cursor at the end.
-        this.messageInput.value = raw;
-        this.messageInput.dispatchEvent(new Event('input'));
-        this.messageInput.focus();
-        this.messageInput.selectionStart = this.messageInput.selectionEnd = raw.length;
+        if (idx >= 0 && idx < this.messageHistory.length) {
+            this.messageHistory.length = idx;
+        }
         this._refreshEditButtons();
-    }
 
-    async editMessage(messageDiv) {
-        // Spec treats Edit as Resend with cursor-at-end. The user can then modify
-        // and press Enter to re-send.
-        return this.resendMessage(messageDiv);
+        if (autoSend && raw) {
+            this.messageInput.value = raw;
+            this.messageInput.dispatchEvent(new Event('input'));
+            this.sendMessage();
+        } else {
+            this.messageInput.value = raw;
+            this.messageInput.dispatchEvent(new Event('input'));
+            this.messageInput.focus();
+            this.messageInput.selectionStart = this.messageInput.selectionEnd = raw.length;
+        }
     }
 
     _jumpUserMessage(delta) {

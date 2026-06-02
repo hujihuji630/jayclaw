@@ -93,20 +93,20 @@ class Skill:
         return steps
 
     def to_prompt(self) -> str:
-        """Convert skill to prompt text.
+        """Full skill content for injection when invoked.
 
         Returns:
-            Skill as prompt text
+            Complete skill content as prompt text
         """
-        prompt = f"# Skill: {self.name} — {self.title}\n\n"
-        prompt += f"{self.description}\n\n"
+        return f"## Skill: {self.name}\n\n{self.content}"
 
-        if self.steps:
-            prompt += "## Steps:\n"
-            for i, step in enumerate(self.steps, 1):
-                prompt += f"{i}. {step}\n"
+    def to_summary(self) -> str:
+        """Compact metadata for system prompt index.
 
-        return prompt
+        Returns:
+            One-line summary: name + description
+        """
+        return f"- **{self.name}**: {self.description}"
 
     def __repr__(self) -> str:
         return f"Skill(name={self.name}, path={self.path})"
@@ -176,7 +176,7 @@ class SkillManager:
         if not path.exists():
             raise FileNotFoundError(f"Skill not found: {path}")
 
-        content = path.read_text()
+        content = path.read_text(encoding="utf-8")
         name = path.parent.name  # Use directory name as skill name
 
         skill = Skill(name=name, path=path, content=content)
@@ -216,21 +216,25 @@ class SkillManager:
         return skill.to_prompt() if skill else None
 
     def get_all_skills_prompt(self) -> str:
-        """Get prompt text for all skills.
+        """Get compact skill index for system prompt.
 
         Returns:
-            Combined skills prompt
+            Skill index with names and descriptions only
         """
         if not self.skills:
             return ""
 
         prompt = "# Available Skills\n\n"
-        prompt += "You have access to the following skills:\n\n"
+        prompt += "You have access to the following skills. "
+        prompt += "When a user's request matches a skill, apply its full instructions.\n\n"
 
         for skill in self.skills.values():
-            prompt += f"- **{skill.name}**: {skill.description}\n"
+            prompt += skill.to_summary() + "\n"
 
-        prompt += "\nUse `/skill:{skill_name}` to invoke a skill.\n"
+        prompt += (
+            "\nTo invoke a skill, use `/skill:{name}` or recognize when "
+            "the user's request matches a skill description and apply it automatically.\n"
+        )
 
         return prompt
 

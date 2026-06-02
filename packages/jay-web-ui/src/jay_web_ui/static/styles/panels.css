@@ -100,6 +100,9 @@
   display: flex; align-items: center; justify-content: center;
   z-index: 50;
 }
+.workspace-modal-overlay.hidden,
+.fork-modal-overlay.hidden,
+.agents-modal-overlay.hidden { display: none; }
 .workspace-modal,
 .fork-modal,
 .agents-modal {

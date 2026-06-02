@@ -30,9 +30,12 @@ class MCPClient:
 
     async def start(self) -> None:
         """Spawn the MCP server process and perform the initialize handshake."""
+        import shutil
+
         env = {**os.environ, **(self._env or {})}
+        command = shutil.which(self._command) or self._command
         self._process = await asyncio.create_subprocess_exec(
-            self._command, *self._args,
+            command, *self._args,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

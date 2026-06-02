@@ -312,10 +312,15 @@ class ChatServer:
         if self.agent and hasattr(self.agent, "workspace"):
             workspace = Path(self.agent.workspace)
 
-        agent_content: str | list = message
+        # Skill injection: detect /skill:name and prepend full content
+        agent_content: str | list = self._inject_skill_content(message)
+
         if attachments:
             image_blocks, text_content = process_attachments(attachments, workspace)
-            agent_content = build_multimodal_content(message, image_blocks, text_content)
+            agent_content = build_multimodal_content(
+                agent_content if isinstance(agent_content, str) else message,
+                image_blocks, text_content,
+            )
 
         # Vision model fallback
         vision_used = False
@@ -329,6 +334,10 @@ class ChatServer:
 
         try:
             yield self._format_sse(StreamChunk(type="start"))
+            # Tag the user message DOM so resend/edit/truncate can target it.
+            yield self._format_sse(StreamChunk(
+                type="message_start", id=self.history[-1].id, role="user",
+            ))
 
             if vision_used:
                 img_count = sum(1 for b in agent_content if b.get("type") == "image_url")
@@ -363,11 +372,8 @@ class ChatServer:
                 core_agent = self.agent.agent if hasattr(self.agent, "agent") else self.agent
 
                 status_queue: asyncio.Queue = asyncio.Queue()
+                token_queue: asyncio.Queue = asyncio.Queue()
 
-                # Display labels are now derived from each tool's schema
-                # description (first clause), with optional curated overrides
-                # in ``jay_web_ui.tool_labels._OVERRIDES``. New tools that
-                # register through registry_enhanced show up automatically.
                 from .tool_labels import build_tool_label_map, resolve_label
 
                 tool_labels: dict[str, str] = {}
@@ -387,10 +393,15 @@ class ChatServer:
                     label = resolve_label(tool_labels, tool_name)
                     status_queue.put_nowait(f"✓ {label} 完成")
 
+                def on_token(token_text: str):
+                    token_queue.put_nowait(token_text)
+
                 orig_start = core_agent.on_tool_start
                 orig_end = core_agent.on_tool_end
+                orig_token = getattr(core_agent, "on_token", None)
                 core_agent.on_tool_start = on_tool_start
                 core_agent.on_tool_end = on_tool_end
+                core_agent.on_token = on_token
 
                 yield self._format_sse(StreamChunk(type="status", status="正在分析请求..."))
 
@@ -406,25 +417,32 @@ class ChatServer:
                         while not status_queue.empty():
                             status = status_queue.get_nowait()
                             yield self._format_sse(StreamChunk(type="status", status=status))
-                        await asyncio.sleep(0.05)
+                        while not token_queue.empty():
+                            token = token_queue.get_nowait()
+                            yield self._format_sse(StreamChunk(type="token", content=token))
+                            content += token
+                        await asyncio.sleep(0.02)
 
                     if cancelled:
                         yield self._format_sse(StreamChunk(type="status", status="⛔ 已中止"))
                         yield self._format_sse(StreamChunk(type="done"))
                         return
 
+                    # Drain remaining items after task completes
                     while not status_queue.empty():
                         status = status_queue.get_nowait()
                         yield self._format_sse(StreamChunk(type="status", status=status))
+                    while not token_queue.empty():
+                        token = token_queue.get_nowait()
+                        yield self._format_sse(StreamChunk(type="token", content=token))
+                        content += token
 
-                    response = self._active_task.result()
-                    content = response.content
+                    self._active_task.result()
                 finally:
                     self._active_task = None
                     core_agent.on_tool_start = orig_start
                     core_agent.on_tool_end = orig_end
-
-                yield self._format_sse(StreamChunk(type="token", content=content))
+                    core_agent.on_token = orig_token
 
             elif self.llm:
                 content = ""
@@ -467,6 +485,31 @@ class ChatServer:
     def _format_sse(self, chunk: StreamChunk) -> str:
         """Format chunk as SSE."""
         return f"data: {chunk.model_dump_json()}\n\n"
+
+    def _inject_skill_content(self, message: str) -> str:
+        """Detect /skill:name in message and prepend full skill content."""
+        import re
+
+        match = re.search(r"/skill:([a-zA-Z0-9_-]+)", message)
+        if not match:
+            return message
+
+        skill_name = match.group(1)
+        mgr = None
+        if self.agent:
+            mgr = getattr(self.agent, "skill_manager", None)
+            if mgr is None and hasattr(self.agent, "agent"):
+                mgr = getattr(self.agent.agent, "skill_manager", None)
+
+        if mgr is None:
+            return message
+
+        skill = mgr.get_skill(skill_name)
+        if not skill:
+            return message
+
+        clean_message = message.replace(match.group(0), "").strip()
+        return f"[Skill: {skill_name}]\n{skill.content}\n\n[User Request]\n{clean_message}"
 
     def run(self, **kwargs):
         """Run the server."""

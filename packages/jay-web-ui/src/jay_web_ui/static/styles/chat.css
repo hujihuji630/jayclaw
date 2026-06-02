@@ -2,6 +2,7 @@
 
 .chat-container {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 32px 24px;
 }
@@ -87,6 +88,26 @@
 .message-content p:last-child { margin-bottom: 0; }
 .message-content > ul, .message-content > ol { padding-left: 1.5em; margin: 0.4em 0; }
 
+/* Toast notifications */
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  padding: 10px 20px; border-radius: var(--radius-md);
+  font-size: 0.875rem; color: #fff; z-index: 9999;
+  animation: toast-in 0.2s var(--easing);
+}
+.toast.success { background: #16a34a; }
+.toast.error { background: var(--danger, #dc2626); }
+@keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%); } }
+
+/* Fork button on assistant messages */
+.msg-fork-btn {
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-tertiary); font-size: 1rem; padding: 0 4px;
+  margin-left: 8px; opacity: 0; transition: opacity var(--motion-fast) var(--easing);
+}
+.message:hover .msg-fork-btn { opacity: 1; }
+.msg-fork-btn:hover { color: var(--accent); }
+
 /* Hover row — copy/resend/edit (D3). Filled by markup in Task 20. */
 .message-actions {
   position: absolute; right: 4px; bottom: 8px;
@@ -155,4 +176,45 @@
   font-family: var(--font-display);
   font-size: 1.25rem;
   color: var(--accent);
+}
+
+/* Step log — live execution trace under streaming assistant message.
+   `.step-current` is removed when the response finishes; `.step-done`
+   lines remain as a faint trace of what the agent did. */
+.step-log {
+  margin-top: 6px;
+  display: flex; flex-direction: column;
+  gap: 2px;
+}
+.step-done {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  opacity: 0.55;
+  padding-left: 2px;
+}
+.step-current {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex; align-items: center;
+  gap: 5px;
+  padding-left: 2px;
+}
+.step-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  animation: stepPulse 1.2s ease-in-out infinite;
+}
+.step-notice {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding-left: 2px;
+}
+@keyframes stepPulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
 }

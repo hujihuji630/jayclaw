@@ -80,9 +80,11 @@ def main():
 
         llm = LLM(**llm_kwargs)
 
+        workspace = os.getenv("WORKSPACE", ".")
+
         agent = CodingAgent(
             llm=llm,
-            workspace=".",
+            workspace=workspace,
             verbose=False,
             enable_extensions=True,
             enable_skills=True,
@@ -107,7 +109,7 @@ def main():
     if base_url:
         console.print(f"  Base URL:    [cyan]{base_url}[/cyan]")
     console.print(f"  Temperature: [cyan]{temperature}[/cyan]")
-    console.print(f"  Workspace:   [cyan].[/cyan]")
+    console.print(f"  Workspace:   [cyan]{Path(workspace).resolve()}[/cyan]")
     console.print("─" * 40)
     console.print("按 [bold]Ctrl+C[/bold] 停止服务器")
     console.print()
